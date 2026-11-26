@@ -48,12 +48,12 @@ class BlackBot(commands.InteractionBot):
 sync_flags = commands.CommandSyncFlags.default()
 sync_flags.sync_global_commands = False
 sync_flags.sync_commands_debug = True
+sync_flags.allow_command_deletion = True
 bot = BlackBot(
     command_sync_flags=sync_flags,
     intents=d.Intents(guilds=True, members=True, messages=True, message_content=True, voice_states=True, moderation=True),
     test_guilds=[GUILD_ID] if GUILD_ID else None, allowed_mentions=d.AllowedMentions.none(),
 )
-ADMIN = d.Permissions(administrator=True)
 SERVER_MANAGER = d.Permissions(manage_guild=True)
 config_lock = asyncio.Lock()
 last_streak_day = None
@@ -87,8 +87,7 @@ async def setup(inter):
     await inter.edit_original_response(content="✅ Настройки Black Squad применены. Существующие каналы и роли сохранены.")
 
 
-@bot.slash_command(description="Сохранить и перенести правила из старого канала", default_member_permissions=SERVER_MANAGER)
-async def rules_import(inter, channel: d.TextChannel = None, file: d.Attachment = None):
+async def rules_import(inter, channel=None, file=None):
     if not enabled(inter.guild) or not server.can_configure(inter.author):
         return await respond(inter, "Команда доступна администратору или Кодеру.")
     if config_lock.locked():
@@ -117,13 +116,16 @@ async def rules_import(inter, channel: d.TextChannel = None, file: d.Attachment 
 
 @bot.slash_command(description="Назначить каналы Black Squad через кнопки", default_member_permissions=SERVER_MANAGER)
 async def admin(inter):
+    await open_admin(inter)
+
+
+async def open_admin(inter):
     if not enabled(inter.guild) or not server.can_configure(inter.author):
         return await respond(inter, "Настройка доступна администратору или Кодеру.")
     await inter.response.send_message(embed=status_embed(inter.guild),
                                       view=AdminPanel(inter.guild, config_lock), ephemeral=True)
 
 
-@bot.slash_command(description="Проверить роли, каналы, права и панели Black Squad", default_member_permissions=SERVER_MANAGER)
 async def server_audit(inter):
     if not enabled(inter.guild) or not server.can_configure(inter.author):
         return await respond(inter, "Команда доступна администратору или Кодеру.")
@@ -131,7 +133,6 @@ async def server_audit(inter):
     await report(inter, "Аудит Black Squad", await server.audit(inter.guild), "server_audit")
 
 
-@bot.slash_command(description="Посмотреть кандидатов на исключение за 30 дней неактива", default_member_permissions=ADMIN)
 async def inactive(inter):
     if not enabled(inter.guild) or not inter.author.guild_permissions.administrator:
         return await respond(inter, "Команда доступна администрации Black Squad.")
@@ -147,7 +148,6 @@ async def can_read_stats(inter):
     return False
 
 
-@bot.slash_command(description="Посмотреть XP и звёзды")
 async def rank(inter, member: d.Member = None):
     if not await can_read_stats(inter):
         return
@@ -165,7 +165,6 @@ async def rank(inter, member: d.Member = None):
                          f"**{total} XP**\n{progress}")
 
 
-@bot.slash_command(description="Посмотреть голосовую серию участника")
 async def streak(inter, member: d.Member = None):
     if not await can_read_stats(inter):
         return
@@ -182,7 +181,6 @@ async def streak(inter, member: d.Member = None):
     await respond(inter, f"{member.mention}\n{text}\nДни считаются по Москве.")
 
 
-@bot.slash_command(name="activity", description="Посмотреть активность участника")
 async def activity_command(inter, member: d.Member = None):
     if not await can_read_stats(inter):
         return
@@ -194,28 +192,6 @@ async def activity_command(inter, member: d.Member = None):
                          f"Минут в голосовых: {item['voice_ms'] // 60000}\nПоследняя активность: <t:{item['last'] // 1000}:R>")
 
 
-@bot.slash_command(description="Отправить объявление с уведомлением всему Black Squad")
-async def clan_ping(inter, text: str = commands.Param(max_length=1800)):
-    if not enabled(inter.guild):
-        return
-    if not (inter.author.guild_permissions.administrator or has(inter.author, REVIEWERS)):
-        return await respond(inter, "Оповещать клан могут штаб и рекрутёры.")
-    channel = lookup(inter.guild, "announcements", "channels")
-    role = lookup(inter.guild, "clan_ping", "roles")
-    if not channel or not role:
-        return await respond(inter, "Канал объявлений или роль клана ещё не настроены.")
-    if not channel.permissions_for(inter.guild.me).mention_everyone:
-        return await respond(inter, "Black Bot нужно право «Упоминать @everyone, @here и все роли» в канале объявлений.")
-    if not text.strip():
-        return await respond(inter, "Напиши текст объявления.")
-    await inter.response.defer(ephemeral=True)
-    await channel.send(f"{role.mention}\n{text.strip()}",
-                       allowed_mentions=d.AllowedMentions(everyone=False, users=False, roles=[role], replied_user=False))
-    await inter.edit_original_response(content=f"📣 Объявление отправлено в {channel.mention}.")
-    await server.log(inter.guild, "Оповещение клана", f"{inter.author.mention} · {channel.mention}", True)
-
-
-@bot.slash_command(description="Посмотреть топ участников по XP")
 async def top(inter):
     if not await can_read_stats(inter):
         return
@@ -225,8 +201,7 @@ async def top(inter):
     await respond(inter, "\n".join(lines) or "Таблица пока пуста.")
 
 
-@bot.slash_command(description="Перевести пробника в основной состав")
-async def promote(inter, member: d.Member):
+async def promote(inter, member):
     if not enabled(inter.guild) or (not has(inter.author, REVIEWERS) and inter.author.id != inter.guild.owner_id):
         return await respond(inter, "Перевод в состав доступен штабу.")
     if not has(member, ("trial",)):
@@ -237,10 +212,90 @@ async def promote(inter, member: d.Member):
     await server.log(inter.guild, "Перевод в основной состав", f"{inter.author.mention} · {member.mention}", True)
 
 
+async def tools_action(inter, action):
+    if action == "admin":
+        return await open_admin(inter)
+    if action in ("audit", "inactive"):
+        handler = server_audit if action == "audit" else inactive
+        return await handler(inter)
+    if action.startswith("rules"):
+        if not server.can_configure(inter.author):
+            return await respond(inter, "Импорт правил доступен администратору или Кодеру.")
+        if action == "rules":
+            return await respond(inter, "📜 Откуда перенести правила?", buttons=[
+                server.button("tools:rules-pick", "Из канала", emoji="💬"),
+                server.button("tools:rules-upload", "Из файла", emoji="📎"),
+            ])
+        if action == "rules-pick":
+            return await respond(inter, "Выбери исходный текстовый канал.", buttons=[
+                d.ui.ChannelSelect(custom_id="bs:tools:rules-channel",
+                                   channel_types=[d.ChannelType.text, d.ChannelType.news]),
+            ])
+        if action == "rules-channel":
+            channel = inter.guild.get_channel(int(inter.values[0]))
+            if not isinstance(channel, d.TextChannel):
+                return await respond(inter, "Выбери текстовый канал этого сервера.")
+            return await rules_import(inter, channel=channel)
+        if action == "rules-upload":
+            return await inter.response.send_modal(title="📜 Импорт правил", custom_id="bs:tools:rules-file",
+                components=[d.ui.Label("Файл правил (.txt или .md)", d.ui.FileUpload(custom_id="rules_file"))])
+        if action == "rules-file":
+            files = inter.resolved_values.get("rules_file", [])
+            if files:
+                return await rules_import(inter, file=files[0])
+            return await respond(inter, "Прикрепи файл правил.")
+        return
+    if action in ("promote", "promote-member"):
+        if not has(inter.author, REVIEWERS) and inter.author.id != inter.guild.owner_id:
+            return await respond(inter, "Перевод в состав доступен штабу.")
+        if action == "promote":
+            return await respond(inter, "Выбери пробника для перевода.", buttons=[
+                d.ui.UserSelect(custom_id="bs:tools:promote-member", placeholder="Пробник"),
+            ])
+        member = inter.guild.get_member(int(inter.values[0]))
+        if not member:
+            return await respond(inter, "Участник не найден на сервере.")
+        return await promote(inter, member)
+    if not await can_read_stats(inter):
+        return
+    if action == "stats":
+        return await respond(inter, "📊 Статистика Black Squad", buttons=[
+            server.button("tools:rank", "Мой уровень", emoji="⭐"),
+            server.button("tools:streak", "Моя серия", emoji="🔥"),
+            server.button("tools:activity", "Моя активность", emoji="📈"),
+            server.button("tools:top", "Топ XP", emoji="🏆"),
+            server.button("tools:profile-pick", "Найти участника", emoji="👤"),
+        ])
+    if action == "profile-pick":
+        return await respond(inter, "Выбери, чью статистику посмотреть.", buttons=[
+            d.ui.UserSelect(custom_id="bs:tools:profile", placeholder="Участник"),
+        ])
+    if action == "profile":
+        member = inter.guild.get_member(int(inter.values[0]))
+        if not member or not activity.enrolled(member):
+            return await respond(inter, "Статистика доступна для участников состава.")
+        total = activity.xp(member)
+        item = activity.get_activity(member)
+        series = streaks.state(member)
+        series_text = "—"
+        if series and series["hot"]:
+            series_text = f"🔥{series['hot']}"
+        elif series and series["cold"]:
+            series_text = f"❄️{series['cold']}"
+        return await respond(inter, f"{member.mention} · **{total} XP** · уровень {activity.level(total)}\n"
+                                   f"Серия: {series_text}\nСообщений: {item['messages'] if item else 0}\n"
+                                   f"Минут в войсе: {item['voice_ms'] // 60000 if item else 0}")
+    handler = {"rank": rank, "streak": streak, "activity": activity_command, "top": top}.get(action)
+    if handler:
+        await handler(inter)
+
+
 async def dispatch(inter, custom_id):
     if not enabled(inter.guild) or not custom_id.startswith("bs:"):
         return
     _, action, *parts = custom_id.split(":")
+    if action == "tools" and parts:
+        return await tools_action(inter, parts[0])
     if action == "review":
         return await recruitment.review(inter, parts[0], int(parts[1]))
     if action == "room":

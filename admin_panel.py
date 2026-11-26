@@ -12,7 +12,7 @@ def status_embed(guild):
         channel = lookup(guild, key, "channels", config)
         value = channel.mention if channel else "Канал удалён" if key in config["channels"] else "Не назначен"
         embed.add_field(name=f"{CHANNEL_EMOJI[key]} {label}", value=value, inline=True)
-    embed.set_footer(text="Нажми кнопку, чтобы изменить назначение канала")
+    embed.set_footer(text="Выбери канал или действие")
     return embed
 
 
@@ -60,6 +60,10 @@ class AdminPanel(AdminView):
             item = button(f"admin-panel:{key}", label, style, emoji=CHANNEL_EMOJI[key])
             item.callback = self._select(key, lock)
             self.add_item(item)
+
+        self.add_item(button("tools:audit", "Аудит", emoji="🔎"))
+        self.add_item(button("tools:rules", "Импорт правил", emoji="📜"))
+        self.add_item(button("tools:inactive", "Неактив", emoji="🕒"))
 
     def _select(self, key, lock):
         async def select(inter):

@@ -4,10 +4,10 @@ import disnake as d
 
 import rules
 
-from storage import CATEGORIES, CHANNELS, CLAN, POSTS, REVIEWERS, ROLE_COLORS, ROLES, VERIFIED, channel_name, db, get_config, has, lookup, role_name, save
+from storage import CATEGORIES, CHANNELS, CLAN, POSTS, ROLE_COLORS, ROLES, VERIFIED, channel_name, db, get_config, has, lookup, role_name, save
 
 REASON = "Black Bot · Black Squad"
-STYLE_VERSION = 6
+STYLE_VERSION = 7
 REQUIRED = (
     "manage_roles", "manage_channels", "manage_nicknames", "change_nickname", "kick_members",
     "view_audit_log", "move_members", "connect", "speak", "view_channel", "send_messages",
@@ -70,7 +70,11 @@ def can_configure(member):
     return permissions.administrator or (permissions.manage_guild and has(member, ("coder",)))
 
 
+PANEL_EMOJI = {"verify": "🔑", "apply": "📝", "tools:stats": "📊", "tools:promote": "⬆️", "tools:admin": "🛠️"}
 PANELS = {
+    "adminLogs": ("**🛠️ Управление Black Squad**\nНастройки каналов, аудит и импорт правил.", "tools:admin", "Открыть управление"),
+    "chat": ("**📊 Статистика Black Squad**\nУровень, XP, голосовая серия и рейтинг клана.", "tools:stats", "Статистика"),
+    "reviews": ("**📨 Набор Black Squad**\nЗаявки рассматриваются кнопками под карточками.", "tools:promote", "Перевести пробника"),
     "verify": ("**🔐 Верификация Black Squad**\nНажми кнопку и введи **Ник | Имя**, например **CodeWriterB | Борис**.", "verify", "Изменить никнейм"),
     "rules": ("**📜 Правила Black Squad**\n1. Уважай участников. Без травли, угроз и дискриминации.\n"
               "2. Без спама, мошенничества, читов и публикации чужих данных.\n"
@@ -111,15 +115,18 @@ def permissions(guild, config, key):
         role = lookup(guild, name, "roles", config)
         if role is None:
             raise ValueError(f"Роль «{ROLES[name]}» отсутствует. Выполни /setup.")
-        can_write = writable or (key == "announcements" and name in REVIEWERS)
+        announces = key == "announcements" and name in ("boss", "deputy")
+        can_write = writable or announces
         result[role] = d.PermissionOverwrite(
             view_channel=True, read_message_history=True, use_application_commands=True,
-            send_messages=True if can_write else None if key == "announcements" else False,
+            send_messages=can_write,
+            mention_everyone=(True if announces else None) if key == "announcements" else None,
             send_messages_in_threads=None if writable else False, create_public_threads=None if writable else False,
             create_private_threads=None if writable else False, connect=True if voice else None, speak=True if voice else None,
         )
     if key == "announcements":
         result[guild.default_role].send_messages = False
+        result[guild.default_role].mention_everyone = False
     return result
 
 
@@ -129,7 +136,7 @@ async def publish(guild, config, key, channel):
     text, action, label = PANELS[key]
     if key == "rules" and config.get("rules_source"):
         text = "**📜 Правила Black Squad**\nПравила перенесены из прежнего канала. Читай их ниже."
-    buttons = [button(action, label, emoji={"verify": "🔑", "apply": "📝"}[action])] if action else []
+    buttons = [button(action, label, emoji=PANEL_EMOJI[action])] if action else []
     old = config["panels"].get(key)
     original = guild.get_channel(int(old["channel"])) if old else None
     message = None
@@ -332,7 +339,7 @@ async def audit(guild):
     if not config.get("ready"):
         findings.append("Настройка /setup ещё не завершена.")
     if guild.id == rules.LEGACY_GUILD and not config.get("rules_text"):
-        findings.append("Текст старых правил ещё не сохранён. Используй /rules_import.")
+        findings.append("Текст старых правил ещё не сохранён. Открой «Управление» → «Импорт правил».")
     gate = lookup(guild, "gate", "categories", config)
     unverified = lookup(guild, "unverified", "roles", config)
     if config.get("ready") and gate and unverified and gate.overwrites != category_overwrites(guild, config, "gate"):
