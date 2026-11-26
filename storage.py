@@ -82,8 +82,7 @@ CHANNELS = {
     "apply": ("подать-заявку", "entry", False, VERIFIED, False),
     "interview": ("Собеседование", "entry", True, VERIFIED, True),
     "chat": ("общий", "squad", False, CLAN, True),
-    "pvp": ("пвп", "squad", False, ("pvp", *REVIEWERS), True),
-    "pve": ("пве", "squad", False, ("pve", *REVIEWERS), True),
+    "announcements": ("объявления", "squad", False, CLAN, False),
     "voice": ("Штаб Black Squad", "squad", True, CLAN, True),
     "lobby": ("Создать комнату", "squad", True, CLAN, True),
     "reviews": ("заявки", "staff", False, REVIEWERS, False),
@@ -91,7 +90,7 @@ CHANNELS = {
     "adminLogs": ("админ-логи", "staff", False, ("boss", "deputy", "coder"), False),
 }
 CHANNEL_EMOJI = dict(verify="🔑", rules="📜", info="🖤", apply="📝", interview="🎙️",
-                     chat="💬", pvp="⚔️", pve="🌾", voice="🎧", lobby="➕",
+                     chat="💬", announcements="📢", voice="🎧", lobby="➕",
                      reviews="📨", logs="📋", adminLogs="🛠️")
 ROLE_EMOJI = dict(boss="👑", deputy="🛡️", coder="💻", smuggler="📦", business="💼",
                   accountant="📊", raider="💥", recruiter="📣", pvp="⚔️", pve="🌾",

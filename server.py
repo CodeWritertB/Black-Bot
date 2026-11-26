@@ -4,10 +4,10 @@ import disnake as d
 
 import rules
 
-from storage import CATEGORIES, CHANNELS, CLAN, POSTS, ROLES, VERIFIED, channel_name, db, get_config, has, lookup, role_name, save
+from storage import CATEGORIES, CHANNELS, CLAN, POSTS, REVIEWERS, ROLES, VERIFIED, channel_name, db, get_config, has, lookup, role_name, save
 
 REASON = "Black Bot · Black Squad"
-STYLE_VERSION = 1
+STYLE_VERSION = 2
 REQUIRED = (
     "manage_roles", "manage_channels", "manage_nicknames", "change_nickname", "kick_members",
     "view_audit_log", "move_members", "connect", "speak", "view_channel", "send_messages",
@@ -55,11 +55,15 @@ def permissions(guild, config, key):
         role = lookup(guild, name, "roles", config)
         if role is None:
             raise ValueError(f"Роль «{ROLES[name]}» отсутствует. Выполни /setup.")
+        can_write = writable or (key == "announcements" and name in REVIEWERS)
         result[role] = d.PermissionOverwrite(
-            view_channel=True, read_message_history=True, use_application_commands=True, send_messages=writable,
+            view_channel=True, read_message_history=True, use_application_commands=True,
+            send_messages=True if can_write else None if key == "announcements" else False,
             send_messages_in_threads=None if writable else False, create_public_threads=None if writable else False,
             create_private_threads=None if writable else False, connect=True if voice else None, speak=True if voice else None,
         )
+    if key == "announcements":
+        result[guild.default_role].send_messages = False
     return result
 
 
@@ -117,6 +121,28 @@ async def seed_verification(guild, config):
             logging.exception("Не удалось выдать роль верификации участнику %s", member.id)
 
 
+async def remove_specialty_channels(guild, config):
+    for key in ("pvp", "pve"):
+        channel_id = config["channels"].get(key)
+        if not channel_id:
+            continue
+        channel = guild.get_channel(int(channel_id))
+        if channel is None:
+            try:
+                channel = await guild.fetch_channel(int(channel_id))
+            except d.NotFound:
+                pass
+        if channel:
+            if not isinstance(channel, d.TextChannel):
+                raise ValueError(f"Канал специализации {channel.id} имеет неожиданный тип.")
+            try:
+                await channel.delete(reason=REASON)
+            except d.NotFound:
+                pass
+        config["channels"].pop(key)
+        save(guild, config)
+
+
 async def install(guild):
     missing = [name for name in REQUIRED if not getattr(guild.me.guild_permissions, name)]
     if missing:
@@ -172,6 +198,7 @@ async def install(guild):
         config["channels"][key] = str(channel.id)
         save(guild, config)
         await publish(guild, config, key, channel)
+    await remove_specialty_channels(guild, config)
     config["ready"] = True
     config["style_version"] = STYLE_VERSION
     save(guild, config)
