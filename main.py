@@ -1,0 +1,344 @@
+import asyncio
+import io
+import logging
+import os
+import time
+
+import disnake as d
+from disnake.ext import commands, tasks
+
+import activity
+import recruitment
+import rooms
+import server
+from recruitment import respond
+from storage import CHANNELS, LEVELS, REVIEWERS, db, get_config, has, lookup, write
+
+GUILD_ID = int(os.getenv("DISCORD_GUILD_ID") or 0)
+bot = commands.InteractionBot(
+    intents=d.Intents(guilds=True, members=True, messages=True, message_content=True, voice_states=True, moderation=True),
+    test_guilds=[GUILD_ID] if GUILD_ID else None, allowed_mentions=d.AllowedMentions.none(),
+)
+ADMIN = d.Permissions(administrator=True)
+config_lock = asyncio.Lock()
+
+
+def enabled(guild):
+    return guild and guild.id == GUILD_ID
+
+
+async def report(inter, heading, lines, name):
+    content = "\n".join(lines)
+    if not content:
+        return await inter.edit_original_response(content=f"{heading} · замечаний нет.")
+    if len(content) < 1800:
+        return await inter.edit_original_response(content=f"**{heading}**\n{content}")
+    await inter.edit_original_response(content=heading, file=d.File(io.BytesIO(content.encode()), f"{name}.txt"))
+
+
+@bot.slash_command(description="Создать или обновить структуру Black Squad", default_member_permissions=ADMIN)
+async def setup(inter):
+    if not enabled(inter.guild) or not inter.author.guild_permissions.administrator:
+        return await respond(inter, "Команда доступна администрации Black Squad.")
+    if config_lock.locked():
+        return await respond(inter, "Настройка уже выполняется.")
+    await inter.response.defer(ephemeral=True)
+    async with config_lock:
+        await server.install(inter.guild)
+        for member in inter.guild.members:
+            activity.seed(member)
+    await inter.edit_original_response(content="Структура готова. /admin назначает каналы, /server_audit проверяет сервер.")
+
+
+@bot.slash_command(description="Назначить каналы Black Squad через кнопки", default_member_permissions=ADMIN)
+async def admin(inter):
+    if not enabled(inter.guild) or not inter.author.guild_permissions.administrator:
+        return await respond(inter, "Настройка доступна администрации Black Squad.")
+    buttons = [server.button(f"channel:{key}", data[0], d.ButtonStyle.secondary) for key, data in CHANNELS.items()]
+    await respond(inter, "Выбери назначение канала.", buttons=buttons)
+
+
+@bot.slash_command(description="Проверить роли, каналы, права и панели Black Squad", default_member_permissions=ADMIN)
+async def server_audit(inter):
+    if not enabled(inter.guild) or not inter.author.guild_permissions.administrator:
+        return await respond(inter, "Команда доступна администрации Black Squad.")
+    await inter.response.defer(ephemeral=True)
+    await report(inter, "Аудит Black Squad", await server.audit(inter.guild), "server_audit")
+
+
+@bot.slash_command(description="Посмотреть кандидатов на исключение за 30 дней неактива", default_member_permissions=ADMIN)
+async def inactive(inter):
+    if not enabled(inter.guild) or not inter.author.guild_permissions.administrator:
+        return await respond(inter, "Команда доступна администрации Black Squad.")
+    await inter.response.defer(ephemeral=True)
+    candidates = await activity.inactive(inter.guild)
+    await report(inter, "Неактив 30 дней", [f"{m.mention} · {m.id}" for m in candidates], "inactive")
+
+
+async def can_read_stats(inter):
+    if enabled(inter.guild) and (inter.author.guild_permissions.administrator or activity.enrolled(inter.author)):
+        return True
+    await respond(inter, "Статистика доступна участникам Black Squad.")
+    return False
+
+
+@bot.slash_command(description="Посмотреть XP и звёзды")
+async def rank(inter, member: d.Member = None):
+    if not await can_read_stats(inter):
+        return
+    member = member or inter.author
+    total = activity.xp(member)
+    level = activity.level(total)
+    progress = f"{total} / {LEVELS[level]}" if level < len(LEVELS) else str(total)
+    await respond(inter, f"{member.mention} · {'⭐' * level or '0 звёзд'} · {progress} XP")
+
+
+@bot.slash_command(name="activity", description="Посмотреть активность участника")
+async def activity_command(inter, member: d.Member = None):
+    if not await can_read_stats(inter):
+        return
+    member = member or inter.author
+    item = activity.get_activity(member)
+    if not item:
+        return await respond(inter, "Данные активности ещё не записаны.")
+    await respond(inter, f"**Активность** · {member.mention}\nСообщений: {item['messages']}\n"
+                         f"Минут в голосовых: {item['voice_ms'] // 60000}\nПоследняя активность: <t:{item['last'] // 1000}:R>")
+
+
+@bot.slash_command(description="Посмотреть топ участников по XP")
+async def top(inter):
+    if not await can_read_stats(inter):
+        return
+    values = db.execute("SELECT user,total FROM xp WHERE guild=? ORDER BY total DESC,user", (str(inter.guild.id),))
+    members = [item for item in values if inter.guild.get_member(int(item["user"]))][:10]
+    lines = [f"{i}. <@{item['user']}> · {item['total']} XP" for i, item in enumerate(members, 1)]
+    await respond(inter, "\n".join(lines) or "Таблица пока пуста.")
+
+
+@bot.slash_command(description="Перевести пробника в основной состав")
+async def promote(inter, member: d.Member):
+    if not enabled(inter.guild) or (not has(inter.author, REVIEWERS) and inter.author.id != inter.guild.owner_id):
+        return await respond(inter, "Перевод в состав доступен штабу.")
+    if not has(member, ("trial",)):
+        return await respond(inter, "Выбери пробника.")
+    await inter.response.defer(ephemeral=True)
+    await member.edit(roles=recruitment.roles_after(member, ("trial",), ("member",), get_config(inter.guild)), reason=server.REASON)
+    await inter.edit_original_response(content=f"{member.mention} теперь в основном составе.")
+    await server.log(inter.guild, "Перевод в основной состав", f"{inter.author.mention} · {member.mention}", True)
+
+
+async def dispatch(inter, custom_id):
+    if not enabled(inter.guild) or not custom_id.startswith("bs:"):
+        return
+    _, action, *parts = custom_id.split(":")
+    if action == "review":
+        return await recruitment.review(inter, parts[0], int(parts[1]))
+    if action == "room":
+        return await rooms.room_action(inter, parts[0])
+    if action in ("channel", "assign"):
+        if not inter.author.guild_permissions.administrator:
+            return await respond(inter, "Настройка доступна администрации.")
+        key = parts[0]
+        if action == "channel":
+            channel_type = d.ChannelType.voice if CHANNELS[key][2] else d.ChannelType.text
+            select = d.ui.ChannelSelect(custom_id=f"bs:assign:{key}", channel_types=[channel_type])
+            return await respond(inter, "Выбери канал. Бот применит к нему права раздела.", buttons=[select])
+        if config_lock.locked():
+            return await respond(inter, "Настройка уже выполняется.")
+        await inter.response.defer(ephemeral=True)
+        async with config_lock:
+            channel_id = int(inter.values[0])
+            channel = inter.guild.get_channel(channel_id) or await inter.guild.fetch_channel(channel_id)
+            await server.assign(inter.guild, key, channel)
+        return await inter.edit_original_response(content=f"Назначен {channel.mention}")
+    if action.startswith(("verify", "apply")):
+        return await recruitment.onboarding(inter, action)
+
+
+async def interaction_error(inter, error):
+    logging.error("Ошибка взаимодействия", exc_info=(type(error), error, error.__traceback__))
+    text = "Действие не завершено. " + str(error)[:300]
+    if inter.response.is_done():
+        await inter.followup.send(text, ephemeral=True)
+    else:
+        await respond(inter, text)
+
+
+@bot.event
+async def on_slash_command_error(inter, error):
+    await interaction_error(inter, getattr(error, "original", error))
+
+
+@bot.event
+async def on_message_interaction(inter):
+    try:
+        await dispatch(inter, inter.component.custom_id or "")
+    except Exception as error:
+        await interaction_error(inter, error)
+
+
+@bot.event
+async def on_modal_submit(inter):
+    try:
+        await dispatch(inter, inter.custom_id)
+    except Exception as error:
+        await interaction_error(inter, error)
+
+
+@bot.event
+async def on_member_join(member):
+    guild = member.guild
+    if not enabled(guild) or member.bot or not get_config(guild).get("ready"):
+        return
+    activity.record(member)
+    role = lookup(guild, "unverified", "roles")
+    if role:
+        await member.add_roles(role, reason=server.REASON)
+    await server.log(guild, "Участник присоединился", f"{member.mention} · ожидает верификацию")
+
+
+@bot.event
+async def on_member_remove(member):
+    if not enabled(member.guild) or member.bot:
+        return
+    write("UPDATE applications SET status='left' WHERE guild=? AND applicant=? AND status IN ('open','claimed')",
+          str(member.guild.id), str(member.id))
+    await server.log(member.guild, "Участник покинул сервер", f"{member.mention} · {member.id}")
+
+
+@bot.event
+async def on_member_update(before, after):
+    if not enabled(after.guild):
+        return
+    activity.seed(after)
+    changes = []
+    if before.nick != after.nick:
+        changes.append(f"{before.display_name} → {after.display_name}")
+    for title, roles in (("Выданы", set(after.roles) - set(before.roles)), ("Сняты", set(before.roles) - set(after.roles))):
+        if roles:
+            changes.append(f"{title} · " + ", ".join(role.mention for role in roles))
+    if changes:
+        await server.log(after.guild, "Участник обновлён", after.mention + "\n" + "\n".join(changes))
+
+
+@bot.event
+async def on_message(message):
+    if enabled(message.guild):
+        await activity.message_activity(message)
+
+
+@bot.event
+async def on_raw_message_delete(payload):
+    if payload.guild_id != GUILD_ID:
+        return
+    message = payload.cached_message
+    if message and message.author.bot:
+        return
+    guild = bot.get_guild(payload.guild_id)
+    if not guild:
+        return
+    author = message.author.mention if message else "Автор неизвестен"
+    body = (message.content or "(без текста)") if message else "(текст недоступен)"
+    await server.log(guild, "Сообщение удалено", f"{author} · <#{payload.channel_id}>\n{body}")
+
+
+@bot.event
+async def on_message_edit(before, after):
+    if enabled(after.guild) and not after.author.bot and before.content != after.content:
+        await server.log(after.guild, "Сообщение изменено", f"{after.author.mention} · {after.jump_url}"
+                         f"\nБыло: {before.content}\nСтало: {after.content}")
+
+
+@bot.event
+async def on_raw_bulk_message_delete(payload):
+    guild = bot.get_guild(payload.guild_id)
+    if enabled(guild):
+        await server.log(guild, "Массовое удаление сообщений", f"<#{payload.channel_id}> · удалено {len(payload.message_ids)}")
+
+
+@bot.event
+async def on_voice_state_update(member, before, after):
+    if not enabled(member.guild) or before.channel == after.channel:
+        return
+    results = await asyncio.gather(activity.voice_change(member, before, after), rooms.voice_change(member, before, after),
+                                   server.log(member.guild, "Голосовой канал", f"{member.mention} · "
+                                              f"{getattr(before.channel, 'mention', 'вне канала')} → "
+                                              f"{getattr(after.channel, 'mention', 'вне канала')}"), return_exceptions=True)
+    for result in results:
+        if isinstance(result, Exception):
+            logging.error("Ошибка голосового события", exc_info=(type(result), result, result.__traceback__))
+
+
+AUDIT_EVENTS = {
+    "channel_create": "Канал создан", "channel_update": "Канал изменён", "channel_delete": "Канал удалён",
+    "overwrite_create": "Доступ к каналу добавлен", "overwrite_update": "Доступ к каналу изменён",
+    "overwrite_delete": "Доступ к каналу удалён", "role_create": "Роль создана",
+    "role_update": "Роль изменена", "role_delete": "Роль удалена", "kick": "Участник исключён",
+    "ban": "Участник заблокирован", "unban": "Блокировка снята", "message_delete": "Модератор удалил сообщение",
+    "message_bulk_delete": "Массовое удаление модератором", "member_role_update": "Модератор изменил роли",
+    "member_update": "Модератор обновил участника",
+}
+
+
+@bot.event
+async def on_guild_audit_log_entry_create(entry):
+    title = AUDIT_EVENTS.get(entry.action.name)
+    if enabled(entry.guild) and title:
+        await server.log(entry.guild, title, f"Исполнитель · {getattr(entry.user, 'mention', 'не указан')}"
+                         f"\nЦель · {entry.target}\nПричина · {entry.reason or 'не указана'}", True)
+
+
+@tasks.loop(minutes=1)
+async def count_voice():
+    guild = bot.get_guild(GUILD_ID)
+    if guild:
+        try:
+            await activity.voice_tick(guild)
+        except Exception:
+            logging.exception("Обновление голосового актива")
+    for key, (_, expires) in list(recruitment.drafts.items()):
+        if expires < time.monotonic():
+            recruitment.drafts.pop(key, None)
+
+
+@tasks.loop(hours=1)
+async def check_inactive():
+    guild = bot.get_guild(GUILD_ID)
+    if guild and bot.is_ready():
+        try:
+            await activity.inactive(guild, enforce=True)
+        except Exception:
+            logging.exception("Проверка неактива")
+
+
+@bot.event
+async def on_ready():
+    logging.info("Black Bot подключён как %s", bot.user)
+    guild = bot.get_guild(GUILD_ID)
+    if guild and get_config(guild).get("ready"):
+        for restore in (rooms.restore_rooms, recruitment.restore):
+            try:
+                await restore(guild)
+            except d.HTTPException:
+                logging.exception("Восстановление %s", restore.__name__)
+        already_started = count_voice.is_running()
+        if not already_started:
+            for member in guild.members:
+                activity.seed(member)
+                if activity.enrolled(member):
+                    try:
+                        await activity.sync_stars(member)
+                    except d.HTTPException:
+                        logging.exception("Проверка роли XP для %s", member.id)
+    if not count_voice.is_running():
+        count_voice.start()
+    if not check_inactive.is_running():
+        check_inactive.start()
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    token = os.getenv("DISCORD_TOKEN")
+    if not token or not GUILD_ID:
+        raise SystemExit("Укажи DISCORD_TOKEN и DISCORD_GUILD_ID в переменных окружения или .env.")
+    bot.run(token)
