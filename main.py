@@ -388,6 +388,12 @@ async def on_ready():
                     await server.install(guild)
                 except (d.HTTPException, ValueError):
                     logging.exception("Не удалось обновить оформление Black Squad")
+        if not config_lock.locked():
+            async with config_lock:
+                try:
+                    await server.enable_voice_activation(guild)
+                except d.HTTPException:
+                    logging.exception("Не удалось включить активацию по голосу на сервере")
         for restore in (rooms.restore_rooms, recruitment.restore):
             try:
                 await restore(guild)

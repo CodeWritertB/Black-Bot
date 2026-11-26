@@ -143,6 +143,29 @@ async def remove_specialty_channels(guild, config):
         save(guild, config)
 
 
+async def enable_voice_activation(guild):
+    config = get_config(guild)
+    if config.get("voice_activation_enabled"):
+        return
+    default = guild.default_role
+    if not default.permissions.use_voice_activation:
+        permissions = default.permissions
+        permissions.use_voice_activation = True
+        await default.edit(permissions=permissions, reason=REASON)
+
+    categories = list(guild.categories)
+    # Editing the category also updates its synced channels.
+    channels = [channel for channel in (*guild.voice_channels, *guild.stage_channels)
+                if not channel.permissions_synced]
+    for channel in (*categories, *channels):
+        for target, overwrite in channel.overwrites.items():
+            if overwrite.use_voice_activation is False:
+                overwrite.use_voice_activation = None
+                await channel.set_permissions(target, overwrite=overwrite, reason=REASON)
+    config["voice_activation_enabled"] = True
+    save(guild, config)
+
+
 async def install(guild):
     missing = [name for name in REQUIRED if not getattr(guild.me.guild_permissions, name)]
     if missing:
@@ -204,6 +227,7 @@ async def install(guild):
     config["ready"] = True
     config["style_version"] = STYLE_VERSION
     save(guild, config)
+    await enable_voice_activation(guild)
 
 
 async def assign(guild, key, channel):

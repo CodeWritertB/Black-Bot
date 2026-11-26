@@ -48,6 +48,7 @@ def room_permissions(guild, owner, locked, hidden):
         role = lookup(guild, key, "roles", config)
         if role:
             result[role] = d.PermissionOverwrite(view_channel=not hidden, connect=not locked, speak=True,
+                                                use_voice_activation=True,
                                                 send_messages=True, read_message_history=True)
     return result
 
