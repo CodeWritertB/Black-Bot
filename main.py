@@ -8,11 +8,12 @@ import disnake as d
 from disnake.ext import commands, tasks
 
 import activity
+from admin_panel import AdminPanel, status_embed
 import recruitment
 import rooms
 import server
 from recruitment import respond
-from storage import CHANNELS, LEVELS, REVIEWERS, db, get_config, has, lookup, write
+from storage import LEVELS, REVIEWERS, db, get_config, has, lookup, write
 
 GUILD_ID = int(os.getenv("DISCORD_GUILD_ID") or 0)
 def missing_intents(intents, flags):
@@ -81,8 +82,8 @@ async def setup(inter):
 async def admin(inter):
     if not enabled(inter.guild) or not inter.author.guild_permissions.administrator:
         return await respond(inter, "Настройка доступна администрации Black Squad.")
-    buttons = [server.button(f"channel:{key}", data[0], d.ButtonStyle.secondary) for key, data in CHANNELS.items()]
-    await respond(inter, "Выбери назначение канала.", buttons=buttons)
+    await inter.response.send_message(embed=status_embed(inter.guild),
+                                      view=AdminPanel(inter.guild, config_lock), ephemeral=True)
 
 
 @bot.slash_command(description="Проверить роли, каналы, права и панели Black Squad", default_member_permissions=ADMIN)
@@ -162,22 +163,6 @@ async def dispatch(inter, custom_id):
         return await recruitment.review(inter, parts[0], int(parts[1]))
     if action == "room":
         return await rooms.room_action(inter, parts[0])
-    if action in ("channel", "assign"):
-        if not inter.author.guild_permissions.administrator:
-            return await respond(inter, "Настройка доступна администрации.")
-        key = parts[0]
-        if action == "channel":
-            channel_type = d.ChannelType.voice if CHANNELS[key][2] else d.ChannelType.text
-            select = d.ui.ChannelSelect(custom_id=f"bs:assign:{key}", channel_types=[channel_type])
-            return await respond(inter, "Выбери канал. Бот применит к нему права раздела.", buttons=[select])
-        if config_lock.locked():
-            return await respond(inter, "Настройка уже выполняется.")
-        await inter.response.defer(ephemeral=True)
-        async with config_lock:
-            channel_id = int(inter.values[0])
-            channel = inter.guild.get_channel(channel_id) or await inter.guild.fetch_channel(channel_id)
-            await server.assign(inter.guild, key, channel)
-        return await inter.edit_original_response(content=f"Назначен {channel.mention}")
     if action.startswith(("verify", "apply")):
         return await recruitment.onboarding(inter, action)
 
@@ -221,6 +206,15 @@ async def on_member_join(member):
     role = lookup(guild, "unverified", "roles")
     if role:
         await member.add_roles(role, reason=server.REASON)
+    channel = lookup(guild, "verify", "channels")
+    if channel:
+        try:
+            await channel.send(
+                f"{member.mention}, нажми кнопку выше, чтобы изменить ник и получить доступ к серверу.",
+                allowed_mentions=d.AllowedMentions(users=[member]), delete_after=60,
+            )
+        except d.HTTPException:
+            logging.exception("Не удалось отправить приглашение к верификации для %s", member.id)
     await server.log(guild, "Участник присоединился", f"{member.mention} · ожидает верификацию")
 
 

@@ -28,7 +28,19 @@ db.executescript("""
     CREATE TABLE IF NOT EXISTS rooms (
       id TEXT PRIMARY KEY, guild TEXT, owner TEXT, locked INTEGER DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS room_preferences (
+      guild TEXT, owner TEXT, name TEXT, user_limit INTEGER NOT NULL DEFAULT 0,
+      locked INTEGER NOT NULL DEFAULT 0, hidden INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY(guild,owner)
+    );
 """)
+# Existing Black Bot databases only have the owner and lock state.
+room_columns = {row["name"] for row in db.execute("PRAGMA table_info(rooms)")}
+with db:
+    if "panel" not in room_columns:
+        db.execute("ALTER TABLE rooms ADD COLUMN panel TEXT")
+    if "hidden" not in room_columns:
+        db.execute("ALTER TABLE rooms ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
 
 
 def write(sql, *args):
