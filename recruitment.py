@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import re
 import time
 
@@ -159,6 +160,25 @@ async def onboarding(inter, action):
     await update_message(message, find(guild, number))
     await inter.edit_original_response(content=f"✅ Заявка №{number} отправлена.")
     await log(guild, "Новая заявка", f"№{number} · {member.mention}", True)
+    await notify_reviewers(guild, member, number, message, config)
+
+
+async def notify_reviewers(guild, candidate, number, message, config):
+    text = (f"📨 **Новая заявка в Black Squad №{number}**\n"
+            f"Кандидат: {d.utils.escape_markdown(candidate.display_name)}\n"
+            f"[Открыть заявку в Discord]({message.jump_url})")
+
+    async def send(member):
+        try:
+            await member.send(text, allowed_mentions=d.AllowedMentions.none())
+        except d.Forbidden:
+            pass
+        except d.HTTPException:
+            logging.exception("Не удалось отправить уведомление о заявке %s участнику %s", number, member.id)
+
+    await asyncio.gather(*(send(member) for member in guild.members if not member.bot
+                           and member.id != candidate.id
+                           and (member.id == guild.owner_id or has(member, REVIEWERS, config))))
 
 
 async def update_message(message, app):
