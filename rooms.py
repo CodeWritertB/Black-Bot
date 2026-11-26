@@ -1,6 +1,7 @@
 import asyncio
 from collections import defaultdict
 
+import aiohttp
 import disnake as d
 
 from cards import room_card
@@ -53,17 +54,29 @@ def room_permissions(guild, owner, locked, hidden):
     return result
 
 
+async def avatar_bytes(asset):
+    if asset is None:
+        return None
+    try:
+        return await asyncio.wait_for(asset.replace(size=128, format="png").read(), timeout=4)
+    except (d.HTTPException, aiohttp.ClientError, OSError, TimeoutError):
+        return None
+
+
 async def panel(channel, owner):
     room = find(channel)
     if not room:
         return
-    png = await asyncio.to_thread(room_card, channel.guild.name, channel, owner, room["locked"], room["hidden"])
+    server_icon, owner_avatar = await asyncio.gather(avatar_bytes(channel.guild.icon), avatar_bytes(owner.display_avatar))
+    png = await asyncio.to_thread(room_card, channel.guild.name, channel, owner, room["locked"], room["hidden"],
+                                  server_icon, owner_avatar)
     file = d.File(png, "room.png")
     embed = d.Embed(title="Управление временной комнатой", description=f"Владелец {owner.mention}", color=0xa98658)
     embed.set_image(url="attachment://room.png")
     buttons = [button("room:name", "Название", emoji="✏️"), button("room:limit", "Лимит", emoji="👥"),
                button("room:lock", "Вход", emoji="🔒"), button("room:hide", "Видимость", emoji="👁️"),
-               button("room:transfer", "Передать комнату", emoji="🔁")]
+               button("room:transfer", "Передать комнату", emoji="🔁"),
+               button("room:kick", "Кикнуть из комнаты", d.ButtonStyle.danger, emoji="🚪")]
     if room["panel"]:
         try:
             message = await channel.fetch_message(int(room["panel"]))
@@ -159,22 +172,34 @@ async def room_action(inter, action):
         field = d.ui.TextInput(label="Новое название" if action == "name" else "Лимит 0–99 (0 — без лимита)",
                                custom_id="value", max_length=100 if action == "name" else 2)
         return await inter.response.send_modal(title="Настройки комнаты", custom_id=f"bs:room:set-{action}", components=[field])
-    if action == "transfer":
-        options = [d.SelectOption(label=m.display_name[:100], value=str(m.id)) for m in room_members(channel)
-                   if m.id != inter.author.id][:25]
-        if not options:
+    if action in ("transfer", "kick"):
+        candidates = [m for m in room_members(channel) if m.id != inter.author.id]
+        if not candidates:
             return await respond(inter, "В комнате пока нет другого участника.")
-        return await respond(inter, "Кому передать комнату?", buttons=[d.ui.StringSelect(
-            custom_id="bs:room:transfer-to", options=options)])
+        custom_id = f"bs:room:{action}-to"
+        if len(candidates) > 25:
+            select = d.ui.UserSelect(custom_id=custom_id, placeholder="Участник комнаты")
+        else:
+            options = [d.SelectOption(label=m.display_name[:100], value=str(m.id)) for m in candidates]
+            select = d.ui.StringSelect(custom_id=custom_id, options=options)
+        prompt = "Кого отключить от комнаты?" if action == "kick" else "Кому передать комнату?"
+        return await respond(inter, prompt, buttons=[select])
     await inter.response.defer(ephemeral=True)
     async with room_locks[channel.id]:
         room = find(channel)
         if not room or room["owner"] != str(inter.author.id):
             return await inter.edit_original_response(content="Комната закрыта или владелец изменился.")
-        if action == "transfer-to":
+        if action in ("transfer-to", "kick-to"):
             target = next((m for m in room_members(channel) if str(m.id) == inter.values[0]), None)
             if not target or target.id == inter.author.id:
                 return await inter.edit_original_response(content="Этот участник уже вышел или владеет комнатой.")
+            if action == "kick-to":
+                if target.voice is None or target.voice.channel != channel:
+                    return await inter.edit_original_response(content="Этот игрок уже вышел из комнаты.")
+                await target.move_to(None, reason=f"Владелец {inter.author.id} отключил от временной комнаты")
+                await log(inter.guild, "Игрок отключён от временной комнаты",
+                          f"{inter.author.mention} отключил {target.mention} · {channel.mention}")
+                return await inter.edit_original_response(content=f"🚪 {target.mention} отключён от комнаты.")
             await transfer(channel, inter.author.id, target)
             await log(inter.guild, "Владелец комнаты изменён", f"{inter.author.mention} → {target.mention} · {channel.mention}")
             return await inter.edit_original_response(content=f"Комната передана {target.mention}.")
