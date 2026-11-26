@@ -396,10 +396,34 @@ async def on_member_update(before, after):
         await server.log(after.guild, "Участник обновлён", after.mention + "\n" + "\n".join(changes))
 
 
+async def forward_announcement(message):
+    if message.author.bot or message.webhook_id or message.type not in (d.MessageType.default, d.MessageType.reply):
+        return
+    guild = message.guild
+    channel = lookup(guild, "announcements", "channels")
+    if channel is None or channel.id != message.channel.id:
+        return
+
+    reference = message.to_reference(type=d.MessageReferenceType.forward, fail_if_not_exists=False)
+    limit = asyncio.Semaphore(5)
+
+    async def deliver(member):
+        async with limit:
+            try:
+                await member.send(reference=reference, allowed_mentions=d.AllowedMentions.none())
+            except d.Forbidden:
+                pass
+            except d.HTTPException:
+                logging.exception("Не удалось переслать объявление %s участнику %s", message.id, member.id)
+
+    await asyncio.gather(*(deliver(member) for member in guild.members
+                           if not member.bot and channel.permissions_for(member).view_channel))
+
+
 @bot.event
 async def on_message(message):
     if enabled(message.guild):
-        await activity.message_activity(message)
+        await asyncio.gather(activity.message_activity(message), forward_announcement(message))
 
 
 @bot.event
