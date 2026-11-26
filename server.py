@@ -7,7 +7,7 @@ import rules
 from storage import CATEGORIES, CHANNELS, CLAN, POSTS, REVIEWERS, ROLE_COLORS, ROLES, VERIFIED, channel_name, db, get_config, has, lookup, role_name, save
 
 REASON = "Black Bot · Black Squad"
-STYLE_VERSION = 4
+STYLE_VERSION = 5
 REQUIRED = (
     "manage_roles", "manage_channels", "manage_nicknames", "change_nickname", "kick_members",
     "view_audit_log", "move_members", "connect", "speak", "view_channel", "send_messages",
@@ -170,9 +170,10 @@ async def install(guild):
     for key, original_name in ROLES.items():
         name = role_name(key)
         color = d.Color(ROLE_COLORS[key])
+        is_star = key.startswith("star")
         role = lookup(guild, key, "roles", config) or next((item for item in guild.roles if item.name in (name, original_name) and not item.managed), None)
         if role is None:
-            role = await guild.create_role(name=name, color=color, reason=REASON)
+            role = await guild.create_role(name=name, color=color, hoist=is_star, reason=REASON)
         if not role.is_assignable():
             raise ValueError(f"Подними управляемую роль Black Bot выше «{name}».")
         changes = {}
@@ -180,6 +181,8 @@ async def install(guild):
             changes["name"] = name
         if role.color != color:
             changes["color"] = color
+        if is_star and not role.hoist:
+            changes["hoist"] = True
         if key in STAFF_PERMISSIONS:
             grantable = STAFF_PERMISSIONS[key].value & guild.me.guild_permissions.value
             updated = role.permissions.value | grantable
