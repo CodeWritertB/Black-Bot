@@ -7,7 +7,7 @@ import rules
 from storage import CATEGORIES, CHANNELS, CLAN, POSTS, ROLE_COLORS, ROLES, VERIFIED, channel_name, db, get_config, has, lookup, role_name, save
 
 REASON = "Black Bot · Black Squad"
-STYLE_VERSION = 7
+STYLE_VERSION = 8
 REQUIRED = (
     "manage_roles", "manage_channels", "manage_nicknames", "change_nickname", "kick_members",
     "view_audit_log", "move_members", "connect", "speak", "view_channel", "send_messages",
@@ -137,6 +137,8 @@ async def publish(guild, config, key, channel):
     if key == "rules" and config.get("rules_source"):
         text = "**📜 Правила Black Squad**\nПравила перенесены из прежнего канала. Читай их ниже."
     buttons = [button(action, label, emoji=PANEL_EMOJI[action])] if action else []
+    if key == "reviews":
+        buttons.append(button("tools:invite", "Пригласить на сервер", emoji="🔗"))
     old = config["panels"].get(key)
     original = guild.get_channel(int(old["channel"])) if old else None
     message = None

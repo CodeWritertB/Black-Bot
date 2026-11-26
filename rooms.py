@@ -68,9 +68,9 @@ def save_prefs(guild, owner, **changes):
           str(guild.id), str(owner.id), *(settings[key] for key in ("name", "user_limit", "locked", "hidden")))
 
 
-def room_permissions(guild, owner, locked, hidden):
+def room_permissions(guild, owner, locked, hidden, stream=None):
     result = {
-        guild.default_role: d.PermissionOverwrite(view_channel=False, connect=False),
+        guild.default_role: d.PermissionOverwrite(view_channel=False, connect=False, stream=stream),
         guild.me: d.PermissionOverwrite(view_channel=True, connect=True, send_messages=True, read_message_history=True),
         owner: d.PermissionOverwrite(view_channel=True, connect=True),
     }
@@ -99,15 +99,17 @@ async def panel(channel, owner):
     if not room:
         return
     server_icon, owner_avatar = await asyncio.gather(avatar_bytes(channel.guild.icon), avatar_bytes(owner.display_avatar))
+    video_enabled = channel.overwrites_for(channel.guild.default_role).stream is not False
     png = await asyncio.to_thread(room_card, channel.guild.name, channel, owner, room["locked"], room["hidden"],
-                                  server_icon, owner_avatar)
+                                  server_icon, owner_avatar, video_enabled)
     file = d.File(png, "room.png")
     embed = d.Embed(title="Управление временной комнатой", description=f"Владелец {owner.mention}", color=0xa98658)
     embed.set_image(url="attachment://room.png")
     buttons = [button("room:name", "Название", emoji="✏️"), button("room:limit", "Лимит", emoji="👥"),
                button("room:lock", "Вход", emoji="🔒"), button("room:hide", "Видимость", emoji="👁️"),
                button("room:transfer", "Передать комнату", emoji="🔁"),
-               button("room:kick", "Кикнуть из комнаты", d.ButtonStyle.danger, emoji="🚪")]
+               button("room:kick", "Кикнуть из комнаты", d.ButtonStyle.danger, emoji="🚪"),
+               button("room:video", "Выключить видео" if video_enabled else "Включить видео", emoji="📹")]
     if room["panel"]:
         try:
             message = await channel.fetch_message(int(room["panel"]))
@@ -260,10 +262,16 @@ async def room_action(inter, action):
                 return await inter.edit_original_response(content="Укажи число от 0 до 99.")
             updated = await channel.edit(user_limit=int(value), reason=REASON)
             save_prefs(inter.guild, inter.author, user_limit=int(value))
+        elif action == "video":
+            overwrite = channel.overwrites_for(inter.guild.default_role)
+            overwrite.stream = overwrite.stream is False
+            await channel.set_permissions(inter.guild.default_role, overwrite=overwrite, reason=REASON)
+            updated = await inter.guild.fetch_channel(channel.id)
         elif action in ("lock", "hide"):
             locked = not room["locked"] if action == "lock" else bool(room["locked"])
             hidden = not room["hidden"] if action == "hide" else bool(room["hidden"])
-            updated = await channel.edit(overwrites=room_permissions(inter.guild, inter.author, locked, hidden), reason=REASON)
+            stream = channel.overwrites_for(inter.guild.default_role).stream
+            updated = await channel.edit(overwrites=room_permissions(inter.guild, inter.author, locked, hidden, stream), reason=REASON)
             write("UPDATE rooms SET locked=?,hidden=? WHERE id=?", int(locked), int(hidden), room["id"])
             save_prefs(inter.guild, inter.author, locked=int(locked), hidden=int(hidden))
         else:

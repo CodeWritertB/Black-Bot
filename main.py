@@ -216,6 +216,17 @@ async def promote(inter, member):
 async def tools_action(inter, action):
     if action == "admin":
         return await open_admin(inter)
+    if action == "invite":
+        if not has(inter.author, ("boss", "deputy")) and inter.author.id != inter.guild.owner_id:
+            return await respond(inter, "Приглашать могут Босс и Замы.")
+        channel = lookup(inter.guild, "verify", "channels")
+        if not isinstance(channel, d.TextChannel):
+            return await respond(inter, "Канал верификации ещё не настроен.")
+        await inter.response.defer(ephemeral=True)
+        invite = await channel.create_invite(max_age=86400, max_uses=1, unique=True,
+                                             reason=f"Приглашение от {inter.author.id}")
+        await inter.edit_original_response(content=f"🔗 {invite.url}\nОдин вход, действует 24 часа.")
+        return await server.log(inter.guild, "Приглашение создано", inter.author.mention, True)
     if action in ("audit", "inactive"):
         handler = server_audit if action == "audit" else inactive
         return await handler(inter)

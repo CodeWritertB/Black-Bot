@@ -53,7 +53,7 @@ EMOJI = re.compile(
 )
 
 
-def room_card(guild, room, owner, locked, hidden, server_icon=None, owner_avatar=None):
+def room_card(guild, room, owner, locked, hidden, server_icon=None, owner_avatar=None, video_enabled=True):
     image = Image.new("RGB", (640, 430), "#111318")
     draw = ImageDraw.Draw(image)
     draw.rectangle((0, 0, 640, 6), fill="#c4a675")
@@ -131,7 +131,7 @@ def room_card(guild, room, owner, locked, hidden, server_icon=None, owner_avatar
         draw.rounded_rectangle((x, 226, x + 192, 332), 12, fill="#1b1e25")
         text(title, (x + 12, 242), 17, "#c4a675", 170)
         text(value, (x + 12, 280), 23, width=170)
-    text("Black Bot", (24, 374), 20, "#c7cbd2")
+    text("📹 Видео и демонстрация: " + ("включены" if video_enabled else "выключены"), (24, 350), 20)
     result = BytesIO()
     image.save(result, "PNG")
     result.seek(0)
