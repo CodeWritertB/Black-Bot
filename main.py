@@ -346,7 +346,13 @@ async def on_ready():
                       "Сверь ID сервера и приглашение бота.", GUILD_ID, joined)
     else:
         logging.info("Сервер для слэш-команд: %s (ID %s)", guild.name, guild.id)
-    if guild and get_config(guild).get("ready"):
+    if guild and (config := get_config(guild)).get("ready"):
+        verify = lookup(guild, "verify", "channels", config)
+        if verify and not count_voice.is_running():
+            try:
+                await server.publish(guild, config, "verify", verify)
+            except d.HTTPException:
+                logging.exception("Не удалось обновить панель верификации")
         for restore in (rooms.restore_rooms, recruitment.restore):
             try:
                 await restore(guild)

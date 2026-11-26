@@ -69,11 +69,12 @@ async def onboarding(inter, action):
         if has(member, ("guest", *CLAN), config):
             return await respond(inter, "Ты уже прошёл верификацию.")
         if action == "verify":
-            field = d.ui.TextInput(label="Ник (Имя)", custom_id="nickname", max_length=32, placeholder="BlackWolf (Артём)")
+            field = d.ui.TextInput(label="Ник | Имя", custom_id="nickname", max_length=32, placeholder="CodeWriterB | Борис")
             return await inter.response.send_modal(title="Изменить никнейм", custom_id="bs:verify-submit", components=[field])
-        nick = inter.text_values["nickname"].strip()
-        if not re.fullmatch(r"\S.*\s\([^()]+\)", nick):
-            return await respond(inter, "Введи ник в формате **Ник (Имя)**.")
+        parts = [part.strip() for part in inter.text_values["nickname"].split("|")]
+        if len(parts) != 2 or not all(parts) or len(" | ".join(parts)) > 32:
+            return await respond(inter, "Введи **Ник | Имя**, например **CodeWriterB | Борис**.")
+        nick = " | ".join(parts)
         await inter.response.defer(ephemeral=True)
         await member.edit(nick=nick, roles=roles_after(member, ("unverified",), ("guest",), config), reason=REASON)
         await inter.edit_original_response(content="Верификация пройдена. Теперь доступны правила, описание клана и заявка.")
@@ -184,7 +185,7 @@ async def review(inter, action, number):
             if accepting and candidate:
                 data = json.loads(app["data"])
                 nick = data["nick"][:29 - len(data["name"])].rstrip()
-                await candidate.edit(nick=f"{nick} ({data['name']})",
+                await candidate.edit(nick=f"{nick} | {data['name']}",
                                      roles=roles_after(candidate, ("guest", "unverified", "pvp", "pve"),
                                                        ("trial", *data["specialtyKeys"]), config),
                                      reason=f"Принята заявка №{number}")
