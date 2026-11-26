@@ -1,6 +1,6 @@
 import disnake as d
 
-from server import assign, button
+from server import assign, button, can_configure
 from storage import CHANNELS, CHANNEL_EMOJI, get_config, lookup
 
 
@@ -37,9 +37,9 @@ class ChannelSelect(d.ui.ChannelSelect):
 
 class AdminView(d.ui.View):
     async def interaction_check(self, inter):
-        if inter.author.guild_permissions.administrator:
+        if can_configure(inter.author):
             return True
-        await inter.response.send_message("Нужны права администратора.", ephemeral=True)
+        await inter.response.send_message("Нужна роль Кодер или права администратора.", ephemeral=True)
         return False
 
     async def on_error(self, error, item, inter):

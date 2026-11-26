@@ -12,7 +12,6 @@ from admin_panel import AdminPanel, status_embed
 import recruitment
 import rooms
 import rules
-from reset_server import replace
 import server
 from recruitment import respond
 from storage import LEVELS, REVIEWERS, db, get_config, has, lookup, write
@@ -54,6 +53,7 @@ bot = BlackBot(
     test_guilds=[GUILD_ID] if GUILD_ID else None, allowed_mentions=d.AllowedMentions.none(),
 )
 ADMIN = d.Permissions(administrator=True)
+SERVER_MANAGER = d.Permissions(manage_guild=True)
 config_lock = asyncio.Lock()
 
 
@@ -70,28 +70,25 @@ async def report(inter, heading, lines, name):
     await inter.edit_original_response(content=heading, file=d.File(io.BytesIO(content.encode()), f"{name}.txt"))
 
 
-@bot.slash_command(description="Удалить старые каналы и обычные роли и пересоздать Black Squad", default_member_permissions=ADMIN)
+@bot.slash_command(description="Применить настройки Black Squad к существующим каналам и ролям", default_member_permissions=SERVER_MANAGER)
 async def setup(inter):
-    if not enabled(inter.guild) or not inter.author.guild_permissions.administrator:
-        return await respond(inter, "Команда доступна администрации Black Squad.")
+    if not enabled(inter.guild) or not server.can_configure(inter.author):
+        return await respond(inter, "Команда доступна администратору или Кодеру.")
     if config_lock.locked():
         return await respond(inter, "Настройка уже выполняется.")
     await inter.response.defer(ephemeral=True)
     async with config_lock:
-        await replace(inter.guild)
+        await rules.capture_legacy(inter.guild)
+        await server.install(inter.guild)
         for member in inter.guild.members:
             activity.seed(member)
-    # Discord may remove the interaction along with its original channel.
-    try:
-        await inter.edit_original_response(content="✅ Black Squad пересоздан. Результат записан в админ-лог.")
-    except d.NotFound:
-        pass
+    await inter.edit_original_response(content="✅ Настройки Black Squad применены. Существующие каналы и роли сохранены.")
 
 
-@bot.slash_command(description="Сохранить и перенести правила из старого канала", default_member_permissions=ADMIN)
+@bot.slash_command(description="Сохранить и перенести правила из старого канала", default_member_permissions=SERVER_MANAGER)
 async def rules_import(inter, channel: d.TextChannel = None, file: d.Attachment = None):
-    if not enabled(inter.guild) or not inter.author.guild_permissions.administrator:
-        return await respond(inter, "Команда доступна администрации Black Squad.")
+    if not enabled(inter.guild) or not server.can_configure(inter.author):
+        return await respond(inter, "Команда доступна администратору или Кодеру.")
     if config_lock.locked():
         return await respond(inter, "Настройка уже выполняется.")
     await inter.response.defer(ephemeral=True)
@@ -116,18 +113,18 @@ async def rules_import(inter, channel: d.TextChannel = None, file: d.Attachment 
     await inter.edit_original_response(content=f"📜 Правила сохранены. Страниц: {len(config['rules_text'])}.")
 
 
-@bot.slash_command(description="Назначить каналы Black Squad через кнопки", default_member_permissions=ADMIN)
+@bot.slash_command(description="Назначить каналы Black Squad через кнопки", default_member_permissions=SERVER_MANAGER)
 async def admin(inter):
-    if not enabled(inter.guild) or not inter.author.guild_permissions.administrator:
-        return await respond(inter, "Настройка доступна администрации Black Squad.")
+    if not enabled(inter.guild) or not server.can_configure(inter.author):
+        return await respond(inter, "Настройка доступна администратору или Кодеру.")
     await inter.response.send_message(embed=status_embed(inter.guild),
                                       view=AdminPanel(inter.guild, config_lock), ephemeral=True)
 
 
-@bot.slash_command(description="Проверить роли, каналы, права и панели Black Squad", default_member_permissions=ADMIN)
+@bot.slash_command(description="Проверить роли, каналы, права и панели Black Squad", default_member_permissions=SERVER_MANAGER)
 async def server_audit(inter):
-    if not enabled(inter.guild) or not inter.author.guild_permissions.administrator:
-        return await respond(inter, "Команда доступна администрации Black Squad.")
+    if not enabled(inter.guild) or not server.can_configure(inter.author):
+        return await respond(inter, "Команда доступна администратору или Кодеру.")
     await inter.response.defer(ephemeral=True)
     await report(inter, "Аудит Black Squad", await server.audit(inter.guild), "server_audit")
 
@@ -380,8 +377,9 @@ async def on_ready():
                       "Сверь ID сервера и приглашение бота.", GUILD_ID, joined)
     else:
         logging.info("Сервер для слэш-команд: %s (ID %s)", guild.name, guild.id)
-    if guild and (config := get_config(guild)).get("ready") and not config.get("reset_state"):
-        if config.get("style_version") != server.STYLE_VERSION and not config_lock.locked():
+    if guild and ((config := get_config(guild)).get("ready") or config.get("reset_state")):
+        needs_update = config.get("reset_state") or config.get("style_version") != server.STYLE_VERSION
+        if needs_update and not config_lock.locked():
             async with config_lock:
                 try:
                     await rules.capture_legacy(guild)

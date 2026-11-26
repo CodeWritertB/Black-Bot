@@ -7,13 +7,31 @@ import rules
 from storage import CATEGORIES, CHANNELS, CLAN, POSTS, REVIEWERS, ROLE_COLORS, ROLES, VERIFIED, channel_name, db, get_config, has, lookup, role_name, save
 
 REASON = "Black Bot · Black Squad"
-STYLE_VERSION = 3
+STYLE_VERSION = 4
 REQUIRED = (
     "manage_roles", "manage_channels", "manage_nicknames", "change_nickname", "kick_members",
     "view_audit_log", "move_members", "connect", "speak", "view_channel", "send_messages",
     "read_message_history", "embed_links", "attach_files", "use_application_commands",
     "send_messages_in_threads", "create_public_threads", "create_private_threads",
 )
+CODER_PERMISSIONS = d.Permissions(
+    manage_guild=True, manage_roles=True, manage_channels=True, view_audit_log=True,
+    manage_messages=True, manage_threads=True, manage_webhooks=True,
+    manage_guild_expressions=True, manage_events=True, manage_nicknames=True,
+    kick_members=True, ban_members=True, moderate_members=True,
+    move_members=True, mute_members=True, deafen_members=True,
+)
+DEPUTY_PERMISSIONS = d.Permissions(manage_roles=True, move_members=True)
+STAFF_PERMISSIONS = {"coder": CODER_PERMISSIONS, "deputy": DEPUTY_PERMISSIONS}
+
+
+
+
+def can_configure(member):
+    permissions = member.guild_permissions
+    return permissions.administrator or (permissions.manage_guild and has(member, ("coder",)))
+
+
 PANELS = {
     "verify": ("**🔐 Верификация Black Squad**\nНажми кнопку и введи **Ник | Имя**, например **CodeWriterB | Борис**.", "verify", "Изменить никнейм"),
     "rules": ("**📜 Правила Black Squad**\n1. Уважай участников. Без травли, угроз и дискриминации.\n"
@@ -121,28 +139,6 @@ async def seed_verification(guild, config):
             logging.exception("Не удалось выдать роль верификации участнику %s", member.id)
 
 
-async def remove_specialty_channels(guild, config):
-    for key in ("pvp", "pve"):
-        channel_id = config["channels"].get(key)
-        if not channel_id:
-            continue
-        channel = guild.get_channel(int(channel_id))
-        if channel is None:
-            try:
-                channel = await guild.fetch_channel(int(channel_id))
-            except d.NotFound:
-                pass
-        if channel:
-            if not isinstance(channel, d.TextChannel):
-                raise ValueError(f"Канал специализации {channel.id} имеет неожиданный тип.")
-            try:
-                await channel.delete(reason=REASON)
-            except d.NotFound:
-                pass
-        config["channels"].pop(key)
-        save(guild, config)
-
-
 async def enable_voice_activation(guild):
     config = get_config(guild)
     if config.get("voice_activation_enabled"):
@@ -179,8 +175,18 @@ async def install(guild):
             role = await guild.create_role(name=name, color=color, reason=REASON)
         if not role.is_assignable():
             raise ValueError(f"Подними управляемую роль Black Bot выше «{name}».")
-        if role.name != name or role.color != color:
-            role = await role.edit(name=name, color=color, reason=REASON)
+        changes = {}
+        if role.name != name:
+            changes["name"] = name
+        if role.color != color:
+            changes["color"] = color
+        if key in STAFF_PERMISSIONS:
+            grantable = STAFF_PERMISSIONS[key].value & guild.me.guild_permissions.value
+            updated = role.permissions.value | grantable
+            if updated != role.permissions.value:
+                changes["permissions"] = d.Permissions(updated)
+        if changes:
+            role = await role.edit(reason=REASON, **changes)
         config["roles"][key] = str(role.id)
         save(guild, config)
     label = guild.get_role(int(config.get("botRole") or 0))
@@ -197,33 +203,51 @@ async def install(guild):
     save(guild, config)
     if guild.me.nick != "Black Bot":
         await guild.me.edit(nick="Black Bot", reason=REASON)
+    categories = {}
     for key, name in CATEGORIES.items():
         category = lookup(guild, key, "categories", config)
+        if category is None:
+            names = (name, name.split(" ", 1)[1])
+            matches = [item for item in guild.categories if item.name in names
+                       and str(item.id) not in config["categories"].values()]
+            if len(matches) == 1:
+                category = matches[0]
         overwrites = category_overwrites(guild, config, key)
         if category is None:
             category = await guild.create_category(name, overwrites=overwrites, reason=REASON)
         elif category.name != name or category.overwrites != overwrites:
             await category.edit(name=name, overwrites=overwrites, reason=REASON)
+        categories[key] = category
         config["categories"][key] = str(category.id)
         save(guild, config)
     await seed_verification(guild, config)
-    for key, (_, category, voice, _, _) in CHANNELS.items():
+    for key, (original_name, category, voice, _, _) in CHANNELS.items():
         name = channel_name(key)
         channel = lookup(guild, key, "channels", config)
+        parent = categories[category]
+        if channel is None:
+            expected = d.VoiceChannel if voice else d.TextChannel
+            matches = [item for item in parent.channels
+                       if isinstance(item, expected) and item.name in (name, original_name)
+                       and str(item.id) not in config["channels"].values()]
+            if len(matches) == 1:
+                channel = matches[0]
         overwrites = permissions(guild, config, key)
         if channel:
-            gate = lookup(guild, "gate", "categories", config) if key == "verify" else None
+            gate = parent if key == "verify" else None
             placement = {"category": gate} if gate and channel.category_id != gate.id else {}
             if channel.name != name or channel.overwrites != overwrites or placement:
                 await channel.edit(name=name, overwrites=overwrites, reason=REASON, **placement)
         else:
             create = guild.create_voice_channel if voice else guild.create_text_channel
-            channel = await create(name, category=lookup(guild, category, "categories", config),
+            channel = await create(name, category=parent,
                                    overwrites=overwrites, reason=REASON)
         config["channels"][key] = str(channel.id)
         save(guild, config)
         await publish(guild, config, key, channel)
-    await remove_specialty_channels(guild, config)
+    for key in ("pvp", "pve"):
+        config["channels"].pop(key, None)
+    config.pop("reset_state", None)
     config["ready"] = True
     config["style_version"] = STYLE_VERSION
     save(guild, config)
@@ -268,8 +292,22 @@ async def audit(guild):
                 else lookup(guild, key, "roles", config))
         if role is None or not role.is_assignable():
             findings.append(f"Роль отсутствует или выше бота: {label}")
+        if role and key in STAFF_PERMISSIONS and not role.permissions.administrator:
+            missing = [name for name, requested in STAFF_PERMISSIONS[key]
+                       if requested and not getattr(role.permissions, name)]
+            if missing:
+                findings.append(f"Роли «{label}» не выданы права: " + ", ".join(missing))
         if role and role.permissions.administrator and key not in ("boss", "coder"):
             findings.append(f"Проверь право администратора: {label}")
+    for key in STAFF_PERMISSIONS:
+        manager = lookup(guild, key, "roles", config)
+        if manager is None:
+            continue
+        managed = [lookup(guild, target, "roles", config)
+                   for target in ("recruiter", "member", "trial", "pvp", "pve", "guest", "unverified")]
+        above = [role.name for role in managed if role is not None and role >= manager]
+        if above:
+            findings.append(f"Подними «{manager.name}» выше ролей: " + ", ".join(above))
     known = set()
     for key, (name, _, voice, _, _) in CHANNELS.items():
         channel = lookup(guild, key, "channels", config)

@@ -48,7 +48,8 @@ def room_permissions(guild, owner, locked, hidden):
     for key in CLAN:
         role = lookup(guild, key, "roles", config)
         if role:
-            result[role] = d.PermissionOverwrite(view_channel=not hidden, connect=not locked, speak=True,
+            can_move = key in ("deputy", "coder")
+            result[role] = d.PermissionOverwrite(view_channel=can_move or not hidden, connect=can_move or not locked, speak=True,
                                                 use_voice_activation=True,
                                                 send_messages=True, read_message_history=True)
     return result
@@ -122,10 +123,24 @@ async def reconcile(channel, *, refresh=False):
             await panel(channel, owner)
 
 
+async def restore_staff_access(channel):
+    config = get_config(channel.guild)
+    for key in ("deputy", "coder"):
+        role = lookup(channel.guild, key, "roles", config)
+        if role is None:
+            continue
+        overwrite = channel.overwrites_for(role)
+        if overwrite.view_channel is False or overwrite.connect is False:
+            overwrite.view_channel = True
+            overwrite.connect = True
+            await channel.set_permissions(role, overwrite=overwrite, reason=REASON)
+
+
 async def restore_rooms(guild):
     for row in db.execute("SELECT id FROM rooms WHERE guild=?", (str(guild.id),)).fetchall():
         channel = guild.get_channel(int(row["id"]))
         if channel:
+            await restore_staff_access(channel)
             await reconcile(channel, refresh=True)
         else:
             write("DELETE FROM rooms WHERE id=?", row["id"])
