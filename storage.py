@@ -73,10 +73,10 @@ POSTS = ("coder", "smuggler", "business", "accountant", "raider")
 REVIEWERS = ("boss", "deputy", "recruiter", *POSTS)
 CLAN = ("trial", "member", *REVIEWERS)
 VERIFIED = ("guest", *CLAN)
-CATEGORIES = dict(gate="ВХОД", entry="BLACK SQUAD · НАБОР", squad="BLACK SQUAD · КЛАН",
-                  staff="BLACK SQUAD · ШТАБ")
+CATEGORIES = dict(gate="🔐 ВХОД", entry="📋 BLACK SQUAD · НАБОР", squad="🖤 BLACK SQUAD · КЛАН",
+                  staff="🛡️ BLACK SQUAD · ШТАБ")
 CHANNELS = {
-    "verify": ("верификация", "gate", False, (), False),
+    "verify": ("верификация", "gate", False, ("unverified",), False),
     "rules": ("правила", "entry", False, VERIFIED, False),
     "info": ("о-клане", "entry", False, VERIFIED, False),
     "apply": ("подать-заявку", "entry", False, VERIFIED, False),
@@ -90,6 +90,22 @@ CHANNELS = {
     "logs": ("логи-сервера", "staff", False, ("boss", "deputy", "coder"), False),
     "adminLogs": ("админ-логи", "staff", False, ("boss", "deputy", "coder"), False),
 }
+CHANNEL_EMOJI = dict(verify="🔑", rules="📜", info="🖤", apply="📝", interview="🎙️",
+                     chat="💬", pvp="⚔️", pve="🌾", voice="🎧", lobby="➕",
+                     reviews="📨", logs="📋", adminLogs="🛠️")
+ROLE_EMOJI = dict(boss="👑", deputy="🛡️", coder="💻", smuggler="📦", business="💼",
+                  accountant="📊", raider="💥", recruiter="📣", pvp="⚔️", pve="🌾",
+                  member="🖤", trial="⏳", guest="👤", unverified="🔒")
+
+
+def channel_name(key):
+    return f"{CHANNEL_EMOJI[key]}┃{CHANNELS[key][0]}"
+
+
+def role_name(key):
+    return f"{ROLE_EMOJI[key]} ┃ {ROLES[key]}" if key in ROLE_EMOJI else ROLES[key]
+
+
 FIELDS = {
     "identity": ("Имя и возраст", 64), "nick": ("Игровой никнейм", 32),
     "hours": ("Количество часов в ROB RUN", 10), "activity": ("Время игровой активности в сутки", 100),

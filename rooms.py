@@ -60,9 +60,9 @@ async def panel(channel, owner):
     file = d.File(png, "room.png")
     embed = d.Embed(title="Управление временной комнатой", description=f"Владелец {owner.mention}", color=0xa98658)
     embed.set_image(url="attachment://room.png")
-    buttons = [button("room:name", "Название"), button("room:limit", "Лимит"),
-               button("room:lock", "Вход"), button("room:hide", "Видимость"),
-               button("room:transfer", "Передать комнату")]
+    buttons = [button("room:name", "Название", emoji="✏️"), button("room:limit", "Лимит", emoji="👥"),
+               button("room:lock", "Вход", emoji="🔒"), button("room:hide", "Видимость", emoji="👁️"),
+               button("room:transfer", "Передать комнату", emoji="🔁")]
     if room["panel"]:
         try:
             message = await channel.fetch_message(int(room["panel"]))
@@ -131,7 +131,7 @@ async def voice_change(member, before, after):
     try:
         settings = prefs(guild, member)
         channel = await guild.create_voice_channel(
-            settings["name"] or f"Комната {member.display_name}"[:100], category=lobby.category,
+            settings["name"] or f"🎧 Комната {member.display_name}"[:100], category=lobby.category,
             user_limit=settings["user_limit"], overwrites=room_permissions(guild, member, settings["locked"], settings["hidden"]),
             reason=REASON,
         )

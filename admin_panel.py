@@ -1,17 +1,17 @@
 import disnake as d
 
 from server import assign, button
-from storage import CHANNELS, get_config, lookup
+from storage import CHANNELS, CHANNEL_EMOJI, get_config, lookup
 
 
 # Adapted from Hunter Bot's status embed and per-setting channel selector.
 def status_embed(guild):
     config = get_config(guild)
-    embed = d.Embed(title="Панель управления Black Squad", color=0xa98658)
+    embed = d.Embed(title="🛠️ Панель управления Black Squad", color=0xa98658)
     for key, (label, *_) in CHANNELS.items():
         channel = lookup(guild, key, "channels", config)
         value = channel.mention if channel else "Канал удалён" if key in config["channels"] else "Не назначен"
-        embed.add_field(name=label, value=value, inline=True)
+        embed.add_field(name=f"{CHANNEL_EMOJI[key]} {label}", value=value, inline=True)
     embed.set_footer(text="Нажми кнопку, чтобы изменить назначение канала")
     return embed
 
@@ -57,7 +57,7 @@ class AdminPanel(AdminView):
         super().__init__(timeout=300)
         for key, (label, *_) in CHANNELS.items():
             style = d.ButtonStyle.success if lookup(guild, key, "channels") else d.ButtonStyle.secondary
-            item = button(f"admin-panel:{key}", label, style)
+            item = button(f"admin-panel:{key}", label, style, emoji=CHANNEL_EMOJI[key])
             item.callback = self._select(key, lock)
             self.add_item(item)
 

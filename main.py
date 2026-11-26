@@ -11,6 +11,8 @@ import activity
 from admin_panel import AdminPanel, status_embed
 import recruitment
 import rooms
+import rules
+from reset_server import replace
 import server
 from recruitment import respond
 from storage import LEVELS, REVIEWERS, db, get_config, has, lookup, write
@@ -68,7 +70,7 @@ async def report(inter, heading, lines, name):
     await inter.edit_original_response(content=heading, file=d.File(io.BytesIO(content.encode()), f"{name}.txt"))
 
 
-@bot.slash_command(description="Создать или обновить структуру Black Squad", default_member_permissions=ADMIN)
+@bot.slash_command(description="Удалить старые каналы и обычные роли и пересоздать Black Squad", default_member_permissions=ADMIN)
 async def setup(inter):
     if not enabled(inter.guild) or not inter.author.guild_permissions.administrator:
         return await respond(inter, "Команда доступна администрации Black Squad.")
@@ -76,10 +78,42 @@ async def setup(inter):
         return await respond(inter, "Настройка уже выполняется.")
     await inter.response.defer(ephemeral=True)
     async with config_lock:
-        await server.install(inter.guild)
+        await replace(inter.guild)
         for member in inter.guild.members:
             activity.seed(member)
-    await inter.edit_original_response(content="Структура готова. /admin назначает каналы, /server_audit проверяет сервер.")
+    # Discord may remove the interaction along with its original channel.
+    try:
+        await inter.edit_original_response(content="✅ Black Squad пересоздан. Результат записан в админ-лог.")
+    except d.NotFound:
+        pass
+
+
+@bot.slash_command(description="Сохранить и перенести правила из старого канала", default_member_permissions=ADMIN)
+async def rules_import(inter, channel: d.TextChannel = None, file: d.Attachment = None):
+    if not enabled(inter.guild) or not inter.author.guild_permissions.administrator:
+        return await respond(inter, "Команда доступна администрации Black Squad.")
+    if config_lock.locked():
+        return await respond(inter, "Настройка уже выполняется.")
+    await inter.response.defer(ephemeral=True)
+    async with config_lock:
+        target = lookup(inter.guild, "rules", "channels")
+        if (channel is None) == (file is None):
+            raise ValueError("Выбери канал с правилами или прикрепи текстовый файл.")
+        if channel:
+            if target and target.id == channel.id:
+                raise ValueError("Выбери исходный канал с правилами.")
+            config = await rules.capture(inter.guild, channel)
+        else:
+            if file.size > 256_000 or not file.filename.lower().endswith((".txt", ".md")):
+                raise ValueError("Прикрепи файл .txt или .md размером до 256 КБ.")
+            try:
+                text = (await file.read()).decode("utf-8-sig")
+            except UnicodeDecodeError:
+                raise ValueError("Сохрани текст правил в UTF-8.") from None
+            config = rules.store(inter.guild, file.filename, [text.strip()])
+        if target:
+            await server.publish(inter.guild, config, "rules", target)
+    await inter.edit_original_response(content=f"📜 Правила сохранены. Страниц: {len(config['rules_text'])}.")
 
 
 @bot.slash_command(description="Назначить каналы Black Squad через кнопки", default_member_permissions=ADMIN)
@@ -346,13 +380,14 @@ async def on_ready():
                       "Сверь ID сервера и приглашение бота.", GUILD_ID, joined)
     else:
         logging.info("Сервер для слэш-команд: %s (ID %s)", guild.name, guild.id)
-    if guild and (config := get_config(guild)).get("ready"):
-        verify = lookup(guild, "verify", "channels", config)
-        if verify and not count_voice.is_running():
-            try:
-                await server.publish(guild, config, "verify", verify)
-            except d.HTTPException:
-                logging.exception("Не удалось обновить панель верификации")
+    if guild and (config := get_config(guild)).get("ready") and not config.get("reset_state"):
+        if config.get("style_version") != server.STYLE_VERSION and not config_lock.locked():
+            async with config_lock:
+                try:
+                    await rules.capture_legacy(guild)
+                    await server.install(guild)
+                except (d.HTTPException, ValueError):
+                    logging.exception("Не удалось обновить оформление Black Squad")
         for restore in (rooms.restore_rooms, recruitment.restore):
             try:
                 await restore(guild)

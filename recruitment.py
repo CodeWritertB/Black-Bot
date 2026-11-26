@@ -23,16 +23,16 @@ def controls(app):
     reviewer = f"<@{app['reviewer']}>"
     labels = dict(open="Ожидает рекрутёра", claimed=f"На рассмотрении у {reviewer}",
                   accepting=f"Принимается · {reviewer}", rejecting=f"Отклоняется · {reviewer}",
-                  accepted=f"Принята · {reviewer}", rejected=f"Отклонена · {reviewer}", left="Кандидат покинул сервер")
+                  accepted=f"Принята · {reviewer}", rejected=f"Отклонена · {reviewer}", left="Кандидат покинул сервер", archived="Архив после сброса сервера")
     buttons = []
     if state == "open":
-        buttons.append(button(f"review:claim:{number}", "Взять заявку"))
+        buttons.append(button(f"review:claim:{number}", "Взять заявку", emoji="📥"))
     if state in ("claimed", "accepting"):
-        buttons.append(button(f"review:accept:{number}", "Принять", d.ButtonStyle.success))
+        buttons.append(button(f"review:accept:{number}", "Принять", d.ButtonStyle.success, emoji="✅"))
     if state in ("claimed", "rejecting"):
-        buttons.append(button(f"review:reject:{number}", "Отклонить и кикнуть", d.ButtonStyle.danger))
+        buttons.append(button(f"review:reject:{number}", "Отклонить и кикнуть", d.ButtonStyle.danger, emoji="⛔"))
     if state == "claimed":
-        buttons.append(button(f"review:release:{number}", "Вернуть в очередь", d.ButtonStyle.secondary))
+        buttons.append(button(f"review:release:{number}", "Вернуть в очередь", d.ButtonStyle.secondary, emoji="↩️"))
     return f"**Заявка №{number}** · <@{app['applicant']}>\n{labels[state]}", buttons
 
 
