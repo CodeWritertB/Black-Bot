@@ -1,7 +1,40 @@
+from dataclasses import dataclass
+
 import disnake as d
+from disnake.channel import _guild_channel_factory
 
 import rules
 from storage import db, get_config, save, write
+
+
+@dataclass(frozen=True)
+class ResetChannel:
+    id: int
+    name: str
+    category: bool
+    channel: d.abc.GuildChannel | None
+
+    def deletable_by(self, member):
+        if self.channel is None:
+            return member.guild_permissions.administrator
+        return self.channel.permissions_for(member).manage_channels
+
+
+async def list_reset_channels(guild):
+    try:
+        channels = await guild.fetch_channels()
+    except d.InvalidData:
+        # The REST list can contain types that disnake cannot instantiate yet.
+        state = guild._state
+        result = []
+        for item in await state.http.get_all_guild_channels(guild.id):
+            factory, _ = _guild_channel_factory(item["type"])
+            channel = factory(guild=guild, state=state, data=item) if factory else None
+            result.append(ResetChannel(int(item["id"]), item.get("name") or item["id"],
+                                       item["type"] == d.ChannelType.category.value, channel))
+        return result
+    return [ResetChannel(channel.id, channel.name, isinstance(channel, d.CategoryChannel), channel)
+            for channel in channels]
 
 
 async def replace(guild):
@@ -14,12 +47,12 @@ async def replace(guild):
     if missing:
         raise ValueError("Не хватает прав Black Bot: " + ", ".join(missing))
 
-    channels = await guild.fetch_channels()
+    channels = await list_reset_channels(guild)
     roles = [role for role in await guild.fetch_roles() if not role.is_default() and not role.managed]
     high = [role.name for role in roles if not role.is_assignable()]
     if high:
         raise ValueError("Подними управляемую роль Black Bot выше этих ролей: " + ", ".join(high))
-    blocked = [channel.name for channel in channels if not channel.permissions_for(guild.me).manage_channels]
+    blocked = [channel.name for channel in channels if not channel.deletable_by(guild.me)]
     if blocked:
         raise ValueError("Black Bot не может управлять каналами: " + ", ".join(blocked))
 
@@ -37,13 +70,19 @@ async def replace(guild):
         save(guild, config)
         state = config["reset_state"]
 
-    for channel in sorted(channels, key=lambda item: isinstance(item, d.CategoryChannel)):
+    # Try unsupported channel types first, before deleting channels that disnake knows.
+    for channel in sorted(channels, key=lambda item: (item.channel is not None, item.category)):
         if str(channel.id) not in state["channels"]:
             continue
         try:
-            await channel.delete(reason=REASON)
+            if channel.channel is None:
+                await guild._state.http.delete_channel(channel.id, reason=REASON)
+            else:
+                await channel.channel.delete(reason=REASON)
         except d.NotFound:
             pass
+        except d.HTTPException as error:
+            raise ValueError(f"Discord не удалил канал «{channel.name}» (ID {channel.id}): {error}") from error
 
     for role in reversed(roles):
         if str(role.id) not in state["roles"]:
