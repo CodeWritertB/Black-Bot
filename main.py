@@ -57,6 +57,7 @@ bot = BlackBot(
 SERVER_MANAGER = d.Permissions(manage_guild=True)
 config_lock = asyncio.Lock()
 last_streak_day = None
+last_room_presence = None
 
 
 def enabled(guild):
@@ -480,6 +481,23 @@ async def count_voice():
             recruitment.drafts.pop(key, None)
 
 
+@tasks.loop(seconds=15)
+async def show_rooms_in_profile():
+    global last_room_presence
+    guild = bot.get_guild(GUILD_ID)
+    if not guild or not bot.is_ready():
+        return
+    counts = rooms.public_room_counts(guild)
+    if counts == last_room_presence:
+        return
+    try:
+        await bot.change_presence(activity=d.Game(name=rooms.presence_text(counts)))
+    except d.DiscordException:
+        logging.exception("Не удалось обновить статус комнат")
+    else:
+        last_room_presence = counts
+
+
 @tasks.loop(hours=1)
 async def check_inactive():
     guild = bot.get_guild(GUILD_ID)
@@ -492,6 +510,8 @@ async def check_inactive():
 
 @bot.event
 async def on_ready():
+    global last_room_presence
+    last_room_presence = None
     logging.info("Black Bot подключён как %s", bot.user)
     guild = bot.get_guild(GUILD_ID)
     if guild is None:
@@ -533,6 +553,8 @@ async def on_ready():
         count_voice.start()
     if not check_inactive.is_running():
         check_inactive.start()
+    if not show_rooms_in_profile.is_running():
+        show_rooms_in_profile.start()
 
 
 if __name__ == "__main__":

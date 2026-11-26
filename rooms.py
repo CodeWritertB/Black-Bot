@@ -23,6 +23,36 @@ def room_members(channel):
     return [member for member in channel.members if not member.bot]
 
 
+def public_room_counts(guild):
+    config = get_config(guild)
+    member_role = lookup(guild, "member", "roles", config)
+    if not config.get("ready") or member_role is None:
+        return 0, 0
+    rooms_count = people_count = 0
+    rows = db.execute("SELECT id FROM rooms WHERE guild=? AND hidden=0", (str(guild.id),))
+    for row in rows:
+        channel = guild.get_channel(int(row["id"]))
+        if not isinstance(channel, d.VoiceChannel) or not channel.permissions_for(member_role).view_channel:
+            continue
+        rooms_count += 1
+        people_count += len(room_members(channel))
+    return rooms_count, people_count
+
+
+def presence_text(counts):
+    def amount(number, one, few, many):
+        if 11 <= number % 100 <= 14:
+            word = many
+        else:
+            last = number % 10
+            word = one if last == 1 else few if 2 <= last <= 4 else many
+        return f"{number} {word}"
+
+    room_count, people_count = counts
+    return (f"🎧 {amount(room_count, 'комната', 'комнаты', 'комнат')} · "
+            f"👥 {amount(people_count, 'человек', 'человека', 'человек')}")
+
+
 def prefs(guild, owner):
     row = db.execute("SELECT * FROM room_preferences WHERE guild=? AND owner=?",
                      (str(guild.id), str(owner.id))).fetchone()
