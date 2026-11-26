@@ -25,6 +25,17 @@ db.executescript("""
       guild TEXT, user TEXT, last INTEGER, messages INTEGER DEFAULT 0,
       voice_ms INTEGER DEFAULT 0, PRIMARY KEY (guild,user)
     );
+    CREATE TABLE IF NOT EXISTS xp_voice (
+      guild TEXT, user TEXT, ms INTEGER NOT NULL, PRIMARY KEY (guild,user)
+    );
+    CREATE TABLE IF NOT EXISTS xp_chat (
+      guild TEXT, user TEXT, day TEXT, earned INTEGER NOT NULL, last INTEGER NOT NULL,
+      fingerprint TEXT NOT NULL, PRIMARY KEY (guild,user)
+    );
+    CREATE TABLE IF NOT EXISTS voice_streaks (
+      guild TEXT, user TEXT, day TEXT NOT NULL, hot INTEGER NOT NULL, cold INTEGER NOT NULL,
+      base_nick TEXT, applied_nick TEXT, PRIMARY KEY (guild,user)
+    );
     CREATE TABLE IF NOT EXISTS rooms (
       id TEXT PRIMARY KEY, guild TEXT, owner TEXT, locked INTEGER DEFAULT 0
     );
@@ -124,7 +135,9 @@ FIELDS = {
     "previous": ("Предыдущие кланы", 300, "📂"),
     "expectations": ("Какие ожидания от BLACK SQUAD", 600, "❓"),
 }
-LEVELS = (100, 400, 900, 1600, 2500)
+STAR_HOURS = (10, 20, 50, 100, 200)
+VOICE_XP_PER_MINUTE = 2
+LEVELS = tuple(hours * 60 * VOICE_XP_PER_MINUTE for hours in STAR_HOURS)
 
 
 def has(member, keys, config=None):

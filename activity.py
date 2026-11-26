@@ -1,16 +1,21 @@
 import asyncio
 import logging
-import random
+import hashlib
+from datetime import datetime, timedelta, timezone
 import time
 
 import disnake as d
 
 from server import REASON, log
-from storage import CLAN, LEVELS, db, get_config, has, lookup, write
+from storage import CLAN, LEVELS, VOICE_XP_PER_MINUTE, db, get_config, has, lookup, write
 
 DAY = 86_400_000
-INTERVAL = 300_000
-cooldowns = {}
+MINUTE = 60_000
+CHAT_COOLDOWN = 3 * MINUTE
+CHAT_XP = 3
+CHAT_DAILY_LIMIT = 45
+MSK = timezone(timedelta(hours=3))
+XP_UPSERT = "INSERT INTO xp VALUES (?,?,?) ON CONFLICT(guild,user) DO UPDATE SET total=total+excluded.total"
 sessions = {}
 star_locks = {}
 
@@ -75,48 +80,79 @@ async def sync_stars(member):
         del star_locks[identity]
 
 
-async def award(member, amount):
-    write("INSERT INTO xp VALUES (?,?,?) ON CONFLICT(guild,user) DO UPDATE SET total=total+excluded.total", *key(member), amount)
-    await sync_stars(member)
+def claim_chat_xp(member, content, now):
+    normalized = " ".join(content.casefold().split())
+    if sum(c.isalnum() for c in normalized) < 5:
+        return False
+    day = datetime.fromtimestamp(now / 1000, MSK).date().isoformat()
+    fingerprint = hashlib.sha256(normalized.encode()).hexdigest()
+    identity = key(member)
+    with db:
+        previous = db.execute("SELECT * FROM xp_chat WHERE guild=? AND user=?", identity).fetchone()
+        earned = previous["earned"] if previous and previous["day"] == day else 0
+        if earned >= CHAT_DAILY_LIMIT or (previous and (
+                now - previous["last"] < CHAT_COOLDOWN or fingerprint == previous["fingerprint"])):
+            return False
+        db.execute("""INSERT INTO xp_chat VALUES (?,?,?,?,?,?) ON CONFLICT(guild,user) DO UPDATE SET
+                      day=excluded.day,earned=excluded.earned,last=excluded.last,fingerprint=excluded.fingerprint""",
+                   (*identity, day, earned + CHAT_XP, now, fingerprint))
+        db.execute(XP_UPSERT, (*identity, CHAT_XP))
+    return True
 
 
 async def message_activity(message):
     member = message.author
-    if not isinstance(member, d.Member) or not enrolled(member):
+    if not isinstance(member, d.Member) or not enrolled(member) or message.webhook_id:
         return
     record(member, messages=1)
-    identity, now = key(member), now_ms()
-    if now - cooldowns.get(identity, 0) >= 60_000:
-        cooldowns[identity] = now
-        await award(member, random.randint(10, 25))
+    if claim_chat_xp(member, message.content, now_ms()):
+        await sync_stars(member)
 
 
 def voice_eligible(member, state):
     return bool(state and state.channel and state.channel != member.guild.afk_channel and enrolled(member))
 
 
+def earns_voice_xp(state):
+    return not (state.self_deaf or state.deaf)
+
+
+def record_voice_xp(member, elapsed):
+    if not elapsed:
+        return False
+    identity = key(member)
+    with db:
+        item = db.execute("SELECT ms FROM xp_voice WHERE guild=? AND user=?", identity).fetchone()
+        carry = item["ms"] if item else 0
+        minutes, carry = divmod(carry + elapsed, MINUTE)
+        db.execute("""INSERT INTO xp_voice VALUES (?,?,?) ON CONFLICT(guild,user) DO UPDATE SET ms=excluded.ms""",
+                   (*identity, carry))
+        if minutes:
+            db.execute(XP_UPSERT, (*identity, minutes * VOICE_XP_PER_MINUTE))
+    return bool(minutes)
+
+
 def flush(member, now):
-    last, remainder = sessions[key(member)]
+    last, earns_xp = sessions[key(member)]
     elapsed = max(0, now - last)
-    batches, remainder = divmod(remainder + elapsed, INTERVAL)
-    sessions[key(member)] = now, remainder
+    sessions[key(member)] = now, earns_xp
     if elapsed:
         record(member, voice=elapsed)
-    return batches * 10
+    return earns_xp and record_voice_xp(member, elapsed)
 
 
 async def voice_change(member, before, after):
-    if before.channel == after.channel:
+    if before.channel == after.channel and earns_voice_xp(before) == earns_voice_xp(after):
         return
     identity, now = key(member), now_ms()
-    earned = flush(member, now) if identity in sessions and voice_eligible(member, before) else 0
+    earned = identity in sessions and voice_eligible(member, before) and flush(member, now)
     if voice_eligible(member, after):
         record(member)
-        sessions.setdefault(identity, (now, 0))
+        sessions[identity] = now, earns_voice_xp(after)
     else:
         sessions.pop(identity, None)
     if earned:
-        await award(member, earned)
+        await sync_stars(member)
 
 
 async def voice_tick(guild):
@@ -128,18 +164,16 @@ async def voice_tick(guild):
         identity = key(member)
         if identity not in sessions:
             record(member)
-            sessions[identity] = now, 0
+            sessions[identity] = now, earns_voice_xp(member.voice)
             continue
-        amount = flush(member, now)
-        if amount:
+        earned = flush(member, now)
+        sessions[identity] = now, earns_voice_xp(member.voice)
+        if earned:
             try:
-                await award(member, amount)
+                await sync_stars(member)
             except d.HTTPException:
                 logging.exception("Ошибка роли XP для %s", member.id)
             await asyncio.sleep(0)
-    for identity, last in list(cooldowns.items()):
-        if now - last >= 60_000:
-            del cooldowns[identity]
 
 
 async def inactive(guild, enforce=False):

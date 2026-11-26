@@ -13,8 +13,9 @@ import recruitment
 import rooms
 import rules
 import server
+import streaks
 from recruitment import respond
-from storage import LEVELS, REVIEWERS, db, get_config, has, lookup, write
+from storage import LEVELS, REVIEWERS, VOICE_XP_PER_MINUTE, db, get_config, has, lookup, write
 
 GUILD_ID = int(os.getenv("DISCORD_GUILD_ID") or 0)
 def missing_intents(intents, flags):
@@ -55,6 +56,7 @@ bot = BlackBot(
 ADMIN = d.Permissions(administrator=True)
 SERVER_MANAGER = d.Permissions(manage_guild=True)
 config_lock = asyncio.Lock()
+last_streak_day = None
 
 
 def enabled(guild):
@@ -152,8 +154,32 @@ async def rank(inter, member: d.Member = None):
     member = member or inter.author
     total = activity.xp(member)
     level = activity.level(total)
-    progress = f"{total} / {LEVELS[level]}" if level < len(LEVELS) else str(total)
-    await respond(inter, f"{member.mention} · {'⭐' * level or '0 звёзд'} · {progress} XP")
+    if level < len(LEVELS):
+        remaining = LEVELS[level] - total
+        minutes = (remaining + VOICE_XP_PER_MINUTE - 1) // VOICE_XP_PER_MINUTE
+        hours, mins = divmod(minutes, 60)
+        progress = f"До уровня {level + 1}: **{remaining} XP** (≈ {hours} ч {mins} мин в войсе)"
+    else:
+        progress = "🏆 Максимальный уровень"
+    await respond(inter, f"**Уровень {level}** · {'⭐' * level or '0 звёзд'} · {member.mention}\n"
+                         f"**{total} XP**\n{progress}")
+
+
+@bot.slash_command(description="Посмотреть голосовую серию участника")
+async def streak(inter, member: d.Member = None):
+    if not await can_read_stats(inter):
+        return
+    member = member or inter.author
+    if not activity.enrolled(member):
+        return await respond(inter, "Голосовые серии доступны участникам клана.")
+    item = streaks.state(member)
+    if item and item["hot"]:
+        text = f"🔥 Дней подряд в голосовых: **{item['hot']}**"
+    elif item and item["cold"]:
+        text = f"❄️ Пропущено дней подряд: **{item['cold']}**"
+    else:
+        text = "Голосовая серия ещё не началась."
+    await respond(inter, f"{member.mention}\n{text}\nДни считаются по Москве.")
 
 
 @bot.slash_command(name="activity", description="Посмотреть активность участника")
@@ -314,12 +340,19 @@ async def on_raw_bulk_message_delete(payload):
 
 @bot.event
 async def on_voice_state_update(member, before, after):
-    if not enabled(member.guild) or before.channel == after.channel:
+    if not enabled(member.guild):
         return
-    results = await asyncio.gather(activity.voice_change(member, before, after), rooms.voice_change(member, before, after),
-                                   server.log(member.guild, "Голосовой канал", f"{member.mention} · "
-                                              f"{getattr(before.channel, 'mention', 'вне канала')} → "
-                                              f"{getattr(after.channel, 'mention', 'вне канала')}"), return_exceptions=True)
+    jobs = [activity.voice_change(member, before, after)]
+    if before.channel != after.channel:
+        jobs.extend([
+            rooms.voice_change(member, before, after),
+            server.log(member.guild, "Голосовой канал", f"{member.mention} · "
+                       f"{getattr(before.channel, 'mention', 'вне канала')} → "
+                       f"{getattr(after.channel, 'mention', 'вне канала')}"),
+        ])
+        if activity.voice_eligible(member, after) or activity.voice_eligible(member, before):
+            jobs.append(streaks.sync_member(member, streaks.today_msk(), True))
+    results = await asyncio.gather(*jobs, return_exceptions=True)
     for result in results:
         if isinstance(result, Exception):
             logging.error("Ошибка голосового события", exc_info=(type(result), result, result.__traceback__))
@@ -346,12 +379,21 @@ async def on_guild_audit_log_entry_create(entry):
 
 @tasks.loop(minutes=1)
 async def count_voice():
+    global last_streak_day
     guild = bot.get_guild(GUILD_ID)
-    if guild:
+    if guild and bot.is_ready():
         try:
             await activity.voice_tick(guild)
         except Exception:
             logging.exception("Обновление голосового актива")
+        today = streaks.today_msk()
+        if today != last_streak_day and get_config(guild).get("ready"):
+            try:
+                await streaks.daily(guild, today)
+            except Exception:
+                logging.exception("Обновление голосовых серий")
+            else:
+                last_streak_day = today
     for key, (_, expires) in list(recruitment.drafts.items()):
         if expires < time.monotonic():
             recruitment.drafts.pop(key, None)
