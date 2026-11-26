@@ -15,7 +15,34 @@ from recruitment import respond
 from storage import CHANNELS, LEVELS, REVIEWERS, db, get_config, has, lookup, write
 
 GUILD_ID = int(os.getenv("DISCORD_GUILD_ID") or 0)
-bot = commands.InteractionBot(
+def missing_intents(intents, flags):
+    missing = []
+    if intents.members and not (flags.gateway_guild_members or flags.gateway_guild_members_limited):
+        missing.append("Server Members Intent")
+    if intents.message_content and not (flags.gateway_message_content or flags.gateway_message_content_limited):
+        missing.append("Message Content Intent")
+    return missing
+
+
+class StartupConfigurationError(Exception):
+    pass
+
+
+class BlackBot(commands.InteractionBot):
+    async def login(self, token):
+        await super().login(token)
+        app = await self.application_info()
+        logging.info("Токен принадлежит приложению %s (ID %s)", app.name, app.id)
+        missing = missing_intents(self.intents, app.flags)
+        if missing:
+            raise StartupConfigurationError(
+                "Discord сообщает, что выключены: " + ", ".join(missing)
+                + f". Включи их на https://discord.com/developers/applications/{app.id}/bot"
+                " и нажми Save Changes."
+            )
+
+
+bot = BlackBot(
     intents=d.Intents(guilds=True, members=True, messages=True, message_content=True, voice_states=True, moderation=True),
     test_guilds=[GUILD_ID] if GUILD_ID else None, allowed_mentions=d.AllowedMentions.none(),
 )
@@ -341,4 +368,7 @@ if __name__ == "__main__":
     token = os.getenv("DISCORD_TOKEN")
     if not token or not GUILD_ID:
         raise SystemExit("Укажи DISCORD_TOKEN и DISCORD_GUILD_ID в переменных окружения или .env.")
-    bot.run(token)
+    try:
+        bot.run(token)
+    except StartupConfigurationError as error:
+        raise SystemExit(str(error)) from None
