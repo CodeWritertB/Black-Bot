@@ -4,10 +4,10 @@ import disnake as d
 
 import rules
 
-from storage import CATEGORIES, CHANNELS, CLAN, POSTS, REVIEWERS, ROLES, VERIFIED, channel_name, db, get_config, has, lookup, role_name, save
+from storage import CATEGORIES, CHANNELS, CLAN, POSTS, REVIEWERS, ROLE_COLORS, ROLES, VERIFIED, channel_name, db, get_config, has, lookup, role_name, save
 
 REASON = "Black Bot · Black Squad"
-STYLE_VERSION = 2
+STYLE_VERSION = 3
 REQUIRED = (
     "manage_roles", "manage_channels", "manage_nicknames", "change_nickname", "kick_members",
     "view_audit_log", "move_members", "connect", "speak", "view_channel", "send_messages",
@@ -150,22 +150,24 @@ async def install(guild):
     config = get_config(guild)
     for key, original_name in ROLES.items():
         name = role_name(key)
+        color = d.Color(ROLE_COLORS[key])
         role = lookup(guild, key, "roles", config) or next((item for item in guild.roles if item.name in (name, original_name) and not item.managed), None)
         if role is None:
-            role = await guild.create_role(name=name, reason=REASON)
+            role = await guild.create_role(name=name, color=color, reason=REASON)
         if not role.is_assignable():
             raise ValueError(f"Подними управляемую роль Black Bot выше «{name}».")
-        if role.name != name:
-            role = await role.edit(name=name, reason=REASON)
+        if role.name != name or role.color != color:
+            role = await role.edit(name=name, color=color, reason=REASON)
         config["roles"][key] = str(role.id)
         save(guild, config)
     label = guild.get_role(int(config.get("botRole") or 0))
     if label is None:
         label = next((r for r in guild.roles if r.name in ("Бот", "🤖 ┃ Бот") and not r.managed and not r.permissions.value), None)
+    bot_color = d.Color(ROLE_COLORS["botRole"])
     if label is None:
-        label = await guild.create_role(name="🤖 ┃ Бот", reason=REASON)
-    if label.name != "🤖 ┃ Бот" and label.is_assignable():
-        label = await label.edit(name="🤖 ┃ Бот", reason=REASON)
+        label = await guild.create_role(name="🤖 ┃ Бот", color=bot_color, reason=REASON)
+    if label.is_assignable() and (label.name != "🤖 ┃ Бот" or label.color != bot_color):
+        label = await label.edit(name="🤖 ┃ Бот", color=bot_color, reason=REASON)
     if label not in guild.me.roles:
         await guild.me.add_roles(label, reason=REASON)
     config["botRole"] = str(label.id)

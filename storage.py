@@ -97,6 +97,15 @@ ROLE_EMOJI = dict(boss="👑", deputy="🛡️", coder="💻", smuggler="📦", 
                   member="🖤", trial="⏳", guest="👤", unverified="🔒")
 
 
+ROLE_COLORS = dict(
+    boss=0xE5484D, deputy=0xA477E8, coder=0x4299E1, smuggler=0xBA8057,
+    business=0x42B983, accountant=0x39B8BA, raider=0xE87941, recruiter=0xCD6CB5,
+    pvp=0xD85B75, pve=0x86B957, member=0x7186C9, trial=0xA1A9B8,
+    guest=0x778294, unverified=0x616976, botRole=0x5D6BEA,
+    star1=0xB48B63, star2=0xB7BFCB, star3=0xD4AC52, star4=0xE6B84B, star5=0xFFDD73,
+)
+
+
 def channel_name(key):
     return f"{CHANNEL_EMOJI[key]}┃{CHANNELS[key][0]}"
 
