@@ -43,7 +43,11 @@ class BlackBot(commands.InteractionBot):
             )
 
 
+sync_flags = commands.CommandSyncFlags.default()
+sync_flags.sync_global_commands = False
+sync_flags.sync_commands_debug = True
 bot = BlackBot(
+    command_sync_flags=sync_flags,
     intents=d.Intents(guilds=True, members=True, messages=True, message_content=True, voice_states=True, moderation=True),
     test_guilds=[GUILD_ID] if GUILD_ID else None, allowed_mentions=d.AllowedMentions.none(),
 )
@@ -336,6 +340,12 @@ async def check_inactive():
 async def on_ready():
     logging.info("Black Bot подключён как %s", bot.user)
     guild = bot.get_guild(GUILD_ID)
+    if guild is None:
+        joined = ", ".join(f"{item.name} (ID {item.id})" for item in bot.guilds) or "нет серверов"
+        logging.error("Сервер DISCORD_GUILD_ID=%s недоступен. Black Bot подключён к серверам: %s. "
+                      "Сверь ID сервера и приглашение бота.", GUILD_ID, joined)
+    else:
+        logging.info("Сервер для слэш-команд: %s (ID %s)", guild.name, guild.id)
     if guild and get_config(guild).get("ready"):
         for restore in (rooms.restore_rooms, recruitment.restore):
             try:
