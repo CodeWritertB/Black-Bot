@@ -21,9 +21,9 @@ def find(guild, number):
 def controls(app):
     number, state = app["id"], app["status"]
     reviewer = f"<@{app['reviewer']}>"
-    labels = dict(open="Ожидает рекрутёра", claimed=f"На рассмотрении у {reviewer}",
-                  accepting=f"Принимается · {reviewer}", rejecting=f"Отклоняется · {reviewer}",
-                  accepted=f"Принята · {reviewer}", rejected=f"Отклонена · {reviewer}", left="Кандидат покинул сервер", archived="Архив после сброса сервера")
+    labels = dict(open="⏳ Ожидает рекрутёра", claimed=f"🔎 На рассмотрении у {reviewer}",
+                  accepting=f"⏳ Принимается · {reviewer}", rejecting=f"⏳ Отклоняется · {reviewer}",
+                  accepted=f"✅ Принята · {reviewer}", rejected=f"⛔ Отклонена · {reviewer}", left="🚪 Кандидат покинул сервер", archived="📦 Архив после сброса сервера")
     buttons = []
     if state == "open":
         buttons.append(button(f"review:claim:{number}", "Взять заявку", emoji="📥"))
@@ -33,7 +33,7 @@ def controls(app):
         buttons.append(button(f"review:reject:{number}", "Отклонить и кикнуть", d.ButtonStyle.danger, emoji="⛔"))
     if state == "claimed":
         buttons.append(button(f"review:release:{number}", "Вернуть в очередь", d.ButtonStyle.secondary, emoji="↩️"))
-    return f"**Заявка №{number}** · <@{app['applicant']}>\n{labels[state]}", buttons
+    return f"**📨 Заявка №{number}** · <@{app['applicant']}>\n{labels[state]}", buttons
 
 
 async def respond(inter, text, *, buttons=()):
@@ -41,8 +41,8 @@ async def respond(inter, text, *, buttons=()):
 
 
 def form_input(key, draft):
-    label, maximum = FIELDS[key]
-    return d.ui.Label(label, d.ui.TextInput(custom_id=key, max_length=maximum, value=draft.get(key),
+    label, maximum, emoji = FIELDS[key]
+    return d.ui.Label(f"{emoji} {label}", d.ui.TextInput(custom_id=key, max_length=maximum, value=draft.get(key),
                                            style=d.TextInputStyle.paragraph if maximum > 100 else d.TextInputStyle.short))
 
 
@@ -88,39 +88,57 @@ async def onboarding(inter, action):
     if key in drafts and drafts[key][1] < time.monotonic():
         drafts.pop(key)
     previous_data = drafts.get(key, ({}, 0))[0]
-    short = ("identity", "nick", "hours", "activity")
+    first_fields = ("name", "age", "nick", "hours", "activity")
+    final_fields = ("previous", "expectations")
     if action in ("apply", "apply-edit"):
-        selection = d.ui.StringSelect(custom_id="specialty", min_values=1, max_values=2, options=[
-            d.SelectOption(label=label, value=code, default=code in previous_data.get("specialtyKeys", []))
-            for label, code in [("PvP", "pvp"), ("PvE", "pve")]
-        ])
-        return await inter.response.send_modal(title="Заявка в Black Squad · 1 из 2", custom_id="bs:apply-part1",
-                                               components=[*[form_input(k, previous_data) for k in short], d.ui.Label("Специализация", selection)])
+        return await inter.response.send_modal(title="📝 Заявка в Black Squad · 1 из 2", custom_id="bs:apply-part1",
+                                               components=[form_input(k, previous_data) for k in first_fields])
     if action == "apply-part1":
-        data = {field: inter.text_values[field].strip() for field in short}
-        specialties = inter.values.get("specialty", [])
-        match = re.fullmatch(r"(.*?)\s*[, ]\s*(\d{1,3})(?:\s+(?:лет|года|год))?", data["identity"])
+        if not all(field in inter.text_values for field in first_fields):
+            return await respond(inter, "🔄 Форма обновилась. Открой заявку заново.")
+        data = {**previous_data, **{field: inter.text_values[field].strip() for field in first_fields}}
+        data.pop("first_complete", None)
         drafts[key] = data, time.monotonic() + 1800
-        if not all(data.values()) or not re.fullmatch(r"[0-9]{1,7}", data["hours"]):
-            return await respond(inter, "Заполни все поля. Часы укажи целым числом.", buttons=[button("apply-edit", "Исправить")])
-        if not match or not 1 <= len(match[1].strip()) <= 27 or not 1 <= int(match[2]) <= 120:
-            return await respond(inter, "Введи имя и возраст, например **Артём, 21**.", buttons=[button("apply-edit", "Исправить")])
-        if not specialties or not set(specialties) <= {"pvp", "pve"}:
-            return await respond(inter, "Выбери ПВП, ПВЕ или обе специализации.", buttons=[button("apply-edit", "Исправить")])
-        data.update(name=match[1].strip(), specialtyKeys=specialties,
-                    specialty=" / ".join({"pvp": "PvP", "pve": "PvE"}[item] for item in specialties))
+        edit = [button("apply-edit", "Исправить", emoji="✏️")]
+        if not all(data[field] for field in first_fields):
+            return await respond(inter, "⚠️ Заполни все поля первого шага.", buttons=edit)
+        if "|" in data["name"] or "|" in data["nick"] or len(data["name"]) > 27:
+            return await respond(inter, "⚠️ Укажи имя до 27 символов. Убери знак | из имени и игрового ника.", buttons=edit)
+        if not data["age"].isascii() or not data["age"].isdecimal() or not 1 <= int(data["age"]) <= 120:
+            return await respond(inter, "🎂 Укажи возраст целым числом от 1 до 120.", buttons=edit)
+        if not re.fullmatch(r"[0-9]{1,7}", data["hours"]):
+            return await respond(inter, "⏳ Укажи количество часов целым числом.", buttons=edit)
+        data["name"] = " ".join(data["name"].split())
         data["nick"] = " ".join(data["nick"].split())
-        return await respond(inter, "Остались два поля.", buttons=[button("apply-next", "Продолжить"), button("apply-edit", "Изменить ответы")])
-    if "name" not in previous_data:
-        return await respond(inter, "Заполни первый шаг заявки заново.")
+        data["age"] = str(int(data["age"]))
+        data["first_complete"] = True
+        return await respond(inter, "✅ Первый шаг готов. Выбери специализацию и ответь на два вопроса.", buttons=[
+            button("apply-next", "Продолжить", emoji="➡️"), button("apply-edit", "Изменить ответы", emoji="✏️"),
+        ])
+    if not previous_data.get("first_complete"):
+        return await respond(inter, "🔄 Заполни первый шаг заявки заново.")
     if action == "apply-next":
-        return await inter.response.send_modal(title="Заявка в Black Squad · 2 из 2", custom_id="bs:apply-submit",
-                                               components=[form_input(key, previous_data) for key in ("previous", "expectations")])
+        selection = d.ui.StringSelect(custom_id="specialty", min_values=1, max_values=2, options=[
+            d.SelectOption(label=label, value=code, emoji=emoji, default=code in previous_data.get("specialtyKeys", []))
+            for label, code, emoji in [("PvP", "pvp", "⚔️"), ("PvE", "pve", "🌾")]
+        ])
+        return await inter.response.send_modal(title="📝 Заявка в Black Squad · 2 из 2", custom_id="bs:apply-submit",
+                                               components=[d.ui.Label("🎯 Специализация", selection),
+                                                           *[form_input(k, previous_data) for k in final_fields]])
     if action != "apply-submit":
         return
-    data = {**previous_data, **{name: inter.text_values[name].strip() for name in ("previous", "expectations")}}
-    if not data["previous"] or not data["expectations"]:
-        return await respond(inter, "Заполни оба поля. Если кланов не было, напиши «Не состоял».", buttons=[button("apply-next", "Исправить")])
+    data = {**previous_data, **{name: inter.text_values[name].strip() for name in final_fields}}
+    specialties = inter.values.get("specialty", [])
+    if not specialties or not set(specialties) <= {"pvp", "pve"}:
+        return await respond(inter, "🎯 Выбери PvP, PvE или обе специализации.",
+                             buttons=[button("apply-next", "Исправить", emoji="✏️")])
+    data.update(specialtyKeys=specialties,
+                specialty=" / ".join({"pvp": "PvP", "pve": "PvE"}[item] for item in specialties))
+    if not all(data[field] for field in final_fields):
+        drafts[key] = data, time.monotonic() + 1800
+        return await respond(inter, "⚠️ Заполни оба поля. Если кланов не было, напиши «Не состоял».",
+                             buttons=[button("apply-next", "Исправить", emoji="✏️")])
+    data.pop("first_complete", None)
     channel = lookup(guild, "reviews", "channels", config)
     if not channel:
         return await respond(inter, "Канал рассмотрения не настроен.")
@@ -132,14 +150,14 @@ async def onboarding(inter, action):
     number = entry.lastrowid
     try:
         png = await asyncio.to_thread(application_card, number, member.name, data)
-        message = await channel.send(f"**Заявка №{number}** · {member.mention}", file=d.File(png, f"black-squad-{number}.png"))
+        message = await channel.send(f"**📨 Заявка №{number}** · {member.mention}", file=d.File(png, f"black-squad-{number}.png"))
     except Exception:
         write("DELETE FROM applications WHERE id=? AND status='publishing'", number)
         raise
     write("UPDATE applications SET status='open',message=? WHERE id=?", str(message.id), number)
     drafts.pop(key, None)
     await update_message(message, find(guild, number))
-    await inter.edit_original_response(content=f"Заявка №{number} отправлена.")
+    await inter.edit_original_response(content=f"✅ Заявка №{number} отправлена.")
     await log(guild, "Новая заявка", f"№{number} · {member.mention}", True)
 
 
