@@ -78,7 +78,7 @@ def lookup(guild, key, kind, config=None):
 ROLES = dict(boss="Босс", deputy="Зам", coder="Кодер", smuggler="Контрабандист",
              business="Бизнесмен", accountant="Бугалтер", raider="Рейдер",
              recruiter="Рекрутёр", pvp="ПВП", pve="ПВЕ", member="Свояк",
-             trial="Пробник", guest="Кто ты, воин?", unverified="Не верифицирован",
+             trial="Пробник", guest="Кто ты, воин?", unverified="Не верифицирован", clan_ping="Клан",
              **{f"star{n}": "⭐" * n for n in range(1, 6)})
 POSTS = ("coder", "smuggler", "business", "accountant", "raider")
 REVIEWERS = ("boss", "deputy", "recruiter", *POSTS)
@@ -105,14 +105,14 @@ CHANNEL_EMOJI = dict(verify="🔑", rules="📜", info="🖤", apply="📝", int
                      reviews="📨", logs="📋", adminLogs="🛠️")
 ROLE_EMOJI = dict(boss="👑", deputy="🛡️", coder="💻", smuggler="📦", business="💼",
                   accountant="📊", raider="💥", recruiter="📣", pvp="⚔️", pve="🌾",
-                  member="🖤", trial="⏳", guest="👤", unverified="🔒")
+                  member="🖤", trial="⏳", guest="👤", unverified="🔒", clan_ping="📣")
 
 
 ROLE_COLORS = dict(
     boss=0xE5484D, deputy=0xA477E8, coder=0x4299E1, smuggler=0xBA8057,
     business=0x42B983, accountant=0x39B8BA, raider=0xE87941, recruiter=0xCD6CB5,
     pvp=0xD85B75, pve=0x86B957, member=0x7186C9, trial=0xA1A9B8,
-    guest=0x778294, unverified=0x616976, botRole=0x5D6BEA,
+    guest=0x778294, unverified=0x616976, botRole=0x5D6BEA, clan_ping=0,
     star1=0xB48B63, star2=0xB7BFCB, star3=0xD4AC52, star4=0xE6B84B, star5=0xFFDD73,
 )
 

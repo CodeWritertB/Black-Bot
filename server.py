@@ -7,7 +7,7 @@ import rules
 from storage import CATEGORIES, CHANNELS, CLAN, POSTS, REVIEWERS, ROLE_COLORS, ROLES, VERIFIED, channel_name, db, get_config, has, lookup, role_name, save
 
 REASON = "Black Bot · Black Squad"
-STYLE_VERSION = 5
+STYLE_VERSION = 6
 REQUIRED = (
     "manage_roles", "manage_channels", "manage_nicknames", "change_nickname", "kick_members",
     "view_audit_log", "move_members", "connect", "speak", "view_channel", "send_messages",
@@ -25,6 +25,44 @@ DEPUTY_PERMISSIONS = d.Permissions(manage_roles=True, move_members=True)
 STAFF_PERMISSIONS = {"coder": CODER_PERMISSIONS, "deputy": DEPUTY_PERMISSIONS}
 
 
+
+
+# Discord displays only the highest separated role a member has.
+ROLE_ORDER = (
+    "boss", "deputy", "coder", "smuggler", "business", "accountant", "raider", "recruiter",
+    "star5", "star4", "star3", "star2", "star1", "member", "trial", "pvp", "pve",
+    "guest", "unverified", "clan_ping",
+)
+
+
+async def order_roles(guild, configured):
+    all_roles = sorted(await guild.fetch_roles())
+    by_id = {role.id: role for role in all_roles}
+    ranked = [by_id[configured[key].id] for key in ROLE_ORDER]
+    current = sorted(ranked, reverse=True)
+    if current == ranked:
+        return
+    # Use the existing positions of Black Squad roles, leaving unrelated roles outside the edit.
+    slots = [role.position for role in current]
+    if len(set(slots)) != len(slots):
+        ids = {role.id for role in ranked}
+        slots = [i for i, role in reversed(list(enumerate(all_roles))) if role.id in ids]
+    await guild.edit_role_positions(positions={role: slot for role, slot in zip(ranked, slots)}, reason=REASON)
+
+
+async def sync_clan_ping(member, config=None, role=None):
+    if member.bot:
+        return
+    config = get_config(member.guild) if config is None else config
+    role = role or lookup(member.guild, "clan_ping", "roles", config)
+    if role is None:
+        return
+    in_clan = has(member, CLAN, config)
+    already = role in member.roles
+    if in_clan and not already:
+        await member.add_roles(role, reason=REASON)
+    elif already and not in_clan:
+        await member.remove_roles(role, reason=REASON)
 
 
 def can_configure(member):
@@ -167,13 +205,14 @@ async def install(guild):
     if missing:
         raise ValueError("Не хватает прав: " + ", ".join(missing))
     config = get_config(guild)
+    configured = {}
     for key, original_name in ROLES.items():
         name = role_name(key)
         color = d.Color(ROLE_COLORS[key])
-        is_star = key.startswith("star")
+        separated = key != "clan_ping"
         role = lookup(guild, key, "roles", config) or next((item for item in guild.roles if item.name in (name, original_name) and not item.managed), None)
         if role is None:
-            role = await guild.create_role(name=name, color=color, hoist=is_star, reason=REASON)
+            role = await guild.create_role(name=name, color=color, hoist=separated, reason=REASON)
         if not role.is_assignable():
             raise ValueError(f"Подними управляемую роль Black Bot выше «{name}».")
         changes = {}
@@ -181,8 +220,10 @@ async def install(guild):
             changes["name"] = name
         if role.color != color:
             changes["color"] = color
-        if is_star and not role.hoist:
-            changes["hoist"] = True
+        if role.hoist != separated:
+            changes["hoist"] = separated
+        if key == "clan_ping" and role.mentionable:
+            changes["mentionable"] = False
         if key in STAFF_PERMISSIONS:
             grantable = STAFF_PERMISSIONS[key].value & guild.me.guild_permissions.value
             updated = role.permissions.value | grantable
@@ -190,16 +231,18 @@ async def install(guild):
                 changes["permissions"] = d.Permissions(updated)
         if changes:
             role = await role.edit(reason=REASON, **changes)
+        configured[key] = role
         config["roles"][key] = str(role.id)
         save(guild, config)
+    await order_roles(guild, configured)
     label = guild.get_role(int(config.get("botRole") or 0))
     if label is None:
         label = next((r for r in guild.roles if r.name in ("Бот", "🤖 ┃ Бот") and not r.managed and not r.permissions.value), None)
     bot_color = d.Color(ROLE_COLORS["botRole"])
     if label is None:
-        label = await guild.create_role(name="🤖 ┃ Бот", color=bot_color, reason=REASON)
-    if label.is_assignable() and (label.name != "🤖 ┃ Бот" or label.color != bot_color):
-        label = await label.edit(name="🤖 ┃ Бот", color=bot_color, reason=REASON)
+        label = await guild.create_role(name="🤖 ┃ Бот", color=bot_color, hoist=True, reason=REASON)
+    if label.is_assignable() and (label.name != "🤖 ┃ Бот" or label.color != bot_color or not label.hoist):
+        label = await label.edit(name="🤖 ┃ Бот", color=bot_color, hoist=True, reason=REASON)
     if label not in guild.me.roles:
         await guild.me.add_roles(label, reason=REASON)
     config["botRole"] = str(label.id)
@@ -224,6 +267,11 @@ async def install(guild):
         config["categories"][key] = str(category.id)
         save(guild, config)
     await seed_verification(guild, config)
+    for member in guild.members:
+        try:
+            await sync_clan_ping(member, config, configured["clan_ping"])
+        except d.HTTPException:
+            logging.exception("Не удалось обновить тег клана участнику %s", member.id)
     for key, (original_name, category, voice, _, _) in CHANNELS.items():
         name = channel_name(key)
         channel = lookup(guild, key, "channels", config)

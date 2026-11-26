@@ -194,6 +194,27 @@ async def activity_command(inter, member: d.Member = None):
                          f"Минут в голосовых: {item['voice_ms'] // 60000}\nПоследняя активность: <t:{item['last'] // 1000}:R>")
 
 
+@bot.slash_command(description="Отправить объявление с уведомлением всему Black Squad")
+async def clan_ping(inter, text: str = commands.Param(max_length=1800)):
+    if not enabled(inter.guild):
+        return
+    if not (inter.author.guild_permissions.administrator or has(inter.author, REVIEWERS)):
+        return await respond(inter, "Оповещать клан могут штаб и рекрутёры.")
+    channel = lookup(inter.guild, "announcements", "channels")
+    role = lookup(inter.guild, "clan_ping", "roles")
+    if not channel or not role:
+        return await respond(inter, "Канал объявлений или роль клана ещё не настроены.")
+    if not channel.permissions_for(inter.guild.me).mention_everyone:
+        return await respond(inter, "Black Bot нужно право «Упоминать @everyone, @here и все роли» в канале объявлений.")
+    if not text.strip():
+        return await respond(inter, "Напиши текст объявления.")
+    await inter.response.defer(ephemeral=True)
+    await channel.send(f"{role.mention}\n{text.strip()}",
+                       allowed_mentions=d.AllowedMentions(everyone=False, users=False, roles=[role], replied_user=False))
+    await inter.edit_original_response(content=f"📣 Объявление отправлено в {channel.mention}.")
+    await server.log(inter.guild, "Оповещение клана", f"{inter.author.mention} · {channel.mention}", True)
+
+
 @bot.slash_command(description="Посмотреть топ участников по XP")
 async def top(inter):
     if not await can_read_stats(inter):
@@ -293,6 +314,11 @@ async def on_member_update(before, after):
     if not enabled(after.guild):
         return
     activity.seed(after)
+    if before.roles != after.roles:
+        try:
+            await server.sync_clan_ping(after)
+        except d.HTTPException:
+            logging.exception("Не удалось обновить тег клана участнику %s", after.id)
     changes = []
     if before.nick != after.nick:
         changes.append(f"{before.display_name} → {after.display_name}")
