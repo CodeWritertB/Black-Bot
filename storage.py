@@ -76,7 +76,7 @@ def lookup(guild, key, kind, config=None):
 
 
 ROLES = dict(boss="Босс", deputy="Зам", coder="Кодер", smuggler="Контрабандист",
-             business="Бизнесмен", accountant="Бугалтер", raider="Рейдер",
+             business="Бизнесмен", accountant="Бухгалтер", raider="Рейдер",
              recruiter="Рекрутёр", pvp="ПВП", pve="ПВЕ", member="Свояк",
              trial="Пробник", guest="Кто ты, воин?", unverified="Не верифицирован", clan_ping="Клан",
              **{f"star{n}": "⭐" * n for n in range(1, 6)})
