@@ -206,14 +206,13 @@ def application_embed(app, filename=None):
 
 async def update_message(message, app, member=None):
     filename = f"black-squad-{app['id']}-profile.png"
-    attachment = next((item for item in message.attachments if item.filename == filename), None)
-    if attachment is None:
-        attachment = next((item for item in message.attachments if item.filename.lower().endswith(".png")), None)
+    images = [item for item in message.attachments if item.filename.lower().endswith(".png")]
+    attachment = next((item for item in images if item.filename == filename), images[0] if images else None)
+    keep = [item for item in message.attachments if item not in images]
 
     if member and (attachment is None or attachment.filename != filename):
         png = await profile_card(app["id"], member, json.loads(app["data"]))
         embed, buttons = application_embed(app, filename)
-        keep = [item for item in message.attachments if not attachment or item.id != attachment.id]
         await message.edit(content=None, embed=embed, components=buttons, attachments=keep, file=d.File(png, filename))
         return
 
@@ -223,12 +222,11 @@ async def update_message(message, app, member=None):
     current_buttons = [(item.custom_id, item.label) for row in message.components for item in row.children]
     expected_buttons = [(item.custom_id, item.label) for item in buttons]
     if (not message.content and current and current.color == embed.color and current.description == embed.description
-            and current_buttons == expected_buttons and (not attachment or embedded_image)):
+            and current_buttons == expected_buttons and len(images) <= 1 and (not attachment or embedded_image)):
         return
     if attachment:
         # Submit the file and its image embed together so Discord displays it inside the card.
         file = await attachment.to_file(use_cached=True)
-        keep = [item for item in message.attachments if item.id != attachment.id]
         await message.edit(content=None, embed=embed, components=buttons, attachments=keep, file=file)
         return
 
