@@ -7,7 +7,7 @@ import rules
 from storage import CATEGORIES, CHANNELS, CLAN, POSTS, ROLE_COLORS, ROLES, VERIFIED, channel_name, db, get_config, has, lookup, role_name, save
 
 REASON = "Black Bot · Black Squad"
-STYLE_VERSION = 9
+STYLE_VERSION = 10
 REQUIRED = (
     "manage_roles", "manage_channels", "manage_nicknames", "change_nickname", "kick_members",
     "view_audit_log", "move_members", "connect", "speak", "view_channel", "send_messages",
@@ -82,7 +82,7 @@ PANELS = {
               "4. Через 30 дней без сообщений и голосовой активности бот исключает участников клана.", None, None),
     "info": ("**🖤 BLACK SQUAD · ROB RUN**\nКлан для ПВП, рейдов и ПВЕ-фарма. Штаб координирует бои "
              "за бизнес-территории и развитие в течение вайпа. Новички начинают с испытательного срока.", None, None),
-    "apply": ("**📝 Вступить в BLACK SQUAD**\nЗаполни заявку в два шага и зайди в войс «Собеседование».", "apply", "Заполнить заявку"),
+    "apply": ("**📝 Вступить в BLACK SQUAD**\nЗаполни заявку в два шага и дождись приглашения в один из войсов для собеседования.", "apply", "Заполнить заявку"),
 }
 
 
@@ -123,7 +123,7 @@ def permissions(guild, config, key):
             mention_everyone=(True if announces else None) if key == "announcements" else None,
             send_messages_in_threads=None if writable else False, create_public_threads=None if writable else False,
             create_private_threads=None if writable else False, connect=True if voice else None, speak=True if voice else None,
-            stream=True if key == "interview" else None,
+            stream=True if key.startswith("interview") else None,
         )
     if key == "announcements":
         result[guild.default_role].send_messages = False

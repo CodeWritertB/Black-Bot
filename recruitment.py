@@ -194,9 +194,9 @@ async def update_message(message, app):
     await message.edit(content=None, embed=embed, components=buttons)
 
 
-async def invite_to_interview(inter, app, config):
+async def invite_to_interview(inter, app, config, key):
     guild = inter.guild
-    channel = lookup(guild, "interview", "channels", config)
+    channel = lookup(guild, key, "channels", config)
     if not isinstance(channel, d.VoiceChannel):
         return await inter.edit_original_response(content="Голосовой канал «Собеседование» ещё не настроен.")
     try:
@@ -208,11 +208,11 @@ async def invite_to_interview(inter, app, config):
     url = f"https://discord.com/channels/{guild.id}/{channel.id}"
     try:
         await candidate.send(f"🎙️ Black Squad ждёт тебя на собеседовании по заявке №{app['id']}.\n"
-                             f"[Зайти в голосовой канал «Собеседование»]({url})",
+                             f"[Зайти в {channel.name}]({url})",
                              allowed_mentions=d.AllowedMentions.none())
     except d.Forbidden:
         return await inter.edit_original_response(content="Не удалось отправить приглашение: у кандидата закрыты ЛС.")
-    await inter.edit_original_response(content=f"🎙️ Отправил {candidate.mention} ссылку на собеседование.")
+    await inter.edit_original_response(content=f"🎙️ Отправил {candidate.mention} ссылку на **{channel.name}**.")
     await log(guild, "Приглашение на собеседование",
               f"№{app['id']} · {inter.author.mention} → {candidate.mention}", True)
 
@@ -223,7 +223,9 @@ async def review(inter, action, number):
     if not has(inter.author, REVIEWERS, config) and inter.author.id != guild.owner_id:
         return await respond(inter, "Заявки рассматривает штаб.")
     app = find(guild, number)
-    if not app or app["channel"] != str(inter.channel_id) or app["message"] != str(inter.message.id):
+    rooms = {"voice-1": "interview", **{f"voice-{n}": f"interview{n}" for n in range(2, 5)}}
+    if not app or app["channel"] != str(inter.channel_id) or (
+            action not in rooms and app["message"] != str(inter.message.id)):
         return await respond(inter, "Кнопка относится к другой заявке.")
     await inter.response.defer(ephemeral=True)
     if number in locks:
@@ -233,10 +235,14 @@ async def review(inter, action, number):
         app = find(guild, number)
         actor = str(inter.author.id)
         state = app["status"]
-        if action == "voice":
+        if action == "voice" or action in rooms:
             if state != "open" and (state != "claimed" or app["reviewer"] != actor):
                 return await inter.edit_original_response(content="Позвать можно из очереди или из заявки, которую ты взял.")
-            return await invite_to_interview(inter, app, config)
+            if action == "voice":
+                buttons = [button(f"review:{key}:{number}", f"Собеседование {i}", emoji="🎙️")
+                           for i, key in enumerate(rooms, 1)]
+                return await inter.edit_original_response(content="Выбери войс для собеседования.", components=buttons)
+            return await invite_to_interview(inter, app, config, rooms[action])
         if action == "claim":
             changed = write("UPDATE applications SET status='claimed',reviewer=? WHERE id=? AND status='open'", actor, number)
             if not changed.rowcount:
@@ -274,7 +280,8 @@ async def review(inter, action, number):
         await inter.edit_original_response(content=controls(find(guild, number))[0])
     finally:
         try:
-            await update_message(inter.message, find(guild, number))
+            if action != "voice" and action not in rooms:
+                await update_message(inter.message, find(guild, number))
         finally:
             locks.discard(number)
 
