@@ -216,6 +216,16 @@ async def promote(inter, member):
 async def tools_action(inter, action):
     if action == "admin":
         return await open_admin(inter)
+    if action == "refresh-apps":
+        if not has(inter.author, ("boss", "deputy", "coder")) and not inter.author.guild_permissions.administrator:
+            return await respond(inter, "Обновлять карточки может руководство.")
+        if config_lock.locked():
+            return await respond(inter, "Настройка уже выполняется.")
+        await inter.response.defer(ephemeral=True)
+        async with config_lock:
+            checked, missing, failed = await recruitment.restore(inter.guild, bot.fetch_user)
+        return await inter.edit_original_response(
+            content=f"🔄 Проверено карточек: {checked}. Недоступно: {missing}. Ошибок: {failed}.")
     if action == "invite":
         if not has(inter.author, ("boss", "deputy")) and inter.author.id != inter.guild.owner_id:
             return await respond(inter, "Приглашать могут Босс и Замы.")
@@ -570,11 +580,12 @@ async def on_ready():
                     await server.enable_voice_activation(guild)
                 except d.HTTPException:
                     logging.exception("Не удалось включить активацию по голосу на сервере")
-        for restore in (rooms.restore_rooms, recruitment.restore):
-            try:
-                await restore(guild)
-            except d.HTTPException:
-                logging.exception("Восстановление %s", restore.__name__)
+        try:
+            await rooms.restore_rooms(guild)
+        except d.HTTPException:
+            logging.exception("Не удалось восстановить временные комнаты")
+        async with config_lock:
+            await recruitment.restore(guild, bot.fetch_user)
         already_started = count_voice.is_running()
         if not already_started:
             for member in guild.members:

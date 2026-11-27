@@ -336,11 +336,13 @@ async def review(inter, action, number):
             locks.discard(number)
 
 
-async def restore(guild):
+async def restore(guild, fetch_user=None):
+    processed = missing = failed = 0
     for app in db.execute("SELECT * FROM applications WHERE guild=? AND (message IS NOT NULL OR status=?)",
                           (str(guild.id), "publishing")).fetchall():
         channel = guild.get_channel(int(app["channel"] or 0))
         if not channel:
+            missing += 1
             continue
         try:
             if app["status"] == "publishing":
@@ -354,9 +356,27 @@ async def restore(guild):
                 write("UPDATE applications SET status='open',message=? WHERE id=?", str(message.id), app["id"])
             else:
                 message = await channel.fetch_message(int(app["message"]))
-            await update_message(message, find(guild, app["id"]), guild.get_member(int(app["applicant"])))
+            candidate = None
+            if not any(item.filename == f"black-squad-{app['id']}-profile.png" for item in message.attachments):
+                user_id = int(app["applicant"])
+                candidate = guild.get_member(user_id)
+                if candidate is None:
+                    try:
+                        candidate = await guild.fetch_member(user_id)
+                    except d.NotFound:
+                        if fetch_user:
+                            try:
+                                candidate = await fetch_user(user_id)
+                            except d.NotFound:
+                                pass
+            await update_message(message, find(guild, app["id"]), candidate)
+            processed += 1
         except d.NotFound:
+            missing += 1
             if app["status"] in ("open", "claimed"):
                 write("UPDATE applications SET status='left' WHERE id=?", app["id"])
-        except d.HTTPException:
+        except (d.HTTPException, aiohttp.ClientError, ValueError, TypeError, KeyError):
+            failed += 1
             logging.exception("Не удалось обновить карточку заявки %s", app["id"])
+    logging.info("Карточки заявок: проверено %d, недоступно %d, ошибок %d", processed, missing, failed)
+    return processed, missing, failed
