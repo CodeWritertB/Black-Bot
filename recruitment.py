@@ -225,8 +225,11 @@ async def review(inter, action, number):
     app = find(guild, number)
     rooms = {"voice-1": "interview", **{f"voice-{n}": f"interview{n}" for n in range(2, 5)}}
     if not app or app["channel"] != str(inter.channel_id) or (
-            action not in rooms and app["message"] != str(inter.message.id)):
+            action != "voice-back" and action not in rooms and app["message"] != str(inter.message.id)):
         return await respond(inter, "Кнопка относится к другой заявке.")
+    if action == "voice-back":
+        url = f"https://discord.com/channels/{guild.id}/{app['channel']}/{app['message']}"
+        return await inter.response.edit_message(content=f"↩️ [Вернуться к заявке №{number}]({url})", components=[])
     await inter.response.defer(ephemeral=True)
     if number in locks:
         return await inter.edit_original_response(content="Заявку уже обрабатывают.")
@@ -241,6 +244,7 @@ async def review(inter, action, number):
             if action == "voice":
                 buttons = [button(f"review:{key}:{number}", f"Собеседование {i}", emoji="🎙️")
                            for i, key in enumerate(rooms, 1)]
+                buttons.append(button(f"review:voice-back:{number}", "Назад", d.ButtonStyle.secondary, emoji="↩️"))
                 return await inter.edit_original_response(content="Выбери войс для собеседования.", components=buttons)
             return await invite_to_interview(inter, app, config, rooms[action])
         if action == "claim":
