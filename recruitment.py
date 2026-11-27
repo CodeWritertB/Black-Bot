@@ -153,7 +153,9 @@ async def onboarding(inter, action):
     number = entry.lastrowid
     try:
         png = await asyncio.to_thread(application_card, number, member.name, data)
-        message = await channel.send(f"**📨 Заявка №{number}** · {member.mention}", file=d.File(png, f"black-squad-{number}.png"))
+        filename = f"black-squad-{number}.png"
+        embed, _ = application_embed(dict(id=number, applicant=str(member.id), status="open", reviewer=None), filename)
+        message = await channel.send(embed=embed, file=d.File(png, filename))
     except Exception:
         write("DELETE FROM applications WHERE id=? AND status='publishing'", number)
         raise
@@ -183,14 +185,39 @@ async def notify_reviewers(guild, candidate, number, message, config):
                            and (member.id == guild.owner_id or has(member, REVIEWERS, config))))
 
 
-async def update_message(message, app):
+def application_embed(app, filename=None):
     text, buttons = controls(app)
     colors = {"open": 0xA855F7, "claimed": 0xFACC15, "accepting": 0xFACC15, "rejecting": 0xFACC15,
               "accepted": 0x22C55E, "rejected": 0xEF4444, "left": 0x64748B, "archived": 0x64748B}
     embed = d.Embed(description=text, color=colors[app["status"]])
-    filename = f"black-squad-{app['id']}.png"
-    if any(item.filename == filename for item in message.attachments):
+    if filename:
         embed.set_image(url=f"attachment://{filename}")
+    return embed, buttons
+
+
+async def update_message(message, app):
+    filename = f"black-squad-{app['id']}.png"
+    attachment = next((item for item in message.attachments if item.filename == filename), None)
+    if attachment is None:
+        attachment = next((item for item in message.attachments if item.filename.lower().endswith(".png")), None)
+
+    embed, buttons = application_embed(app, attachment.filename if attachment else None)
+    current = message.embeds[0] if message.embeds else None
+    embedded_image = bool(current and current.image.url and current.image.width)
+    current_buttons = [(item.custom_id, item.label) for row in message.components for item in row.children]
+    expected_buttons = [(item.custom_id, item.label) for item in buttons]
+    if (not message.content and current and current.color == embed.color and current.description == embed.description
+            and current_buttons == expected_buttons and (not attachment or embedded_image)):
+        return
+    if attachment:
+        # Submit the file and its image embed together so Discord displays it inside the card.
+        file = await attachment.to_file(use_cached=True)
+        keep = [item for item in message.attachments if item.id != attachment.id]
+        await message.edit(content=None, embed=embed, components=buttons, attachments=keep, file=file)
+        return
+
+    if embedded_image:
+        embed.set_image(url=current.image.url)
     await message.edit(content=None, embed=embed, components=buttons)
 
 
@@ -291,7 +318,8 @@ async def review(inter, action, number):
 
 
 async def restore(guild):
-    for app in db.execute(f"SELECT * FROM applications WHERE guild=? AND status IN ({ACTIVE})", (str(guild.id),)).fetchall():
+    for app in db.execute("SELECT * FROM applications WHERE guild=? AND (message IS NOT NULL OR status=?)",
+                          (str(guild.id), "publishing")).fetchall():
         channel = guild.get_channel(int(app["channel"] or 0))
         if not channel:
             continue
@@ -311,3 +339,5 @@ async def restore(guild):
         except d.NotFound:
             if app["status"] in ("open", "claimed"):
                 write("UPDATE applications SET status='left' WHERE id=?", app["id"])
+        except d.HTTPException:
+            logging.exception("Не удалось обновить карточку заявки %s", app["id"])
