@@ -338,11 +338,6 @@ async def review(inter, action, number):
             if action != "voice" and action not in rooms:
                 message = await inter.channel.fetch_message(int(app["message"])) if proxy else inter.message
                 await update_message(message, find(guild, number))
-    async with panel_lock:
-        try:
-            await publish(guild, get_config(guild), "reviews", channel, repost=True)
-        except d.HTTPException:
-            logging.exception("Не удалось переместить панель набора в конец канала")
         finally:
             locks.discard(number)
 
