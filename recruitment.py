@@ -155,8 +155,9 @@ async def onboarding(inter, action):
     try:
         png = await profile_card(number, member, data)
         filename = f"black-squad-{number}-profile.png"
-        embed, _ = application_embed(dict(id=number, applicant=str(member.id), status="open", reviewer=None), filename)
-        message = await channel.send(embed=embed, file=d.File(png, filename))
+        card = application_components(dict(id=number, applicant=str(member.id), status="open", reviewer=None),
+                                      filename, interactive=False)
+        message = await channel.send(components=[card], file=d.File(png, filename))
     except Exception:
         write("DELETE FROM applications WHERE id=? AND status='publishing'", number)
         raise
@@ -194,14 +195,24 @@ async def profile_card(number, member, data):
     return await asyncio.to_thread(application_card, number, member.name, data, member.display_name, avatar)
 
 
-def application_embed(app, filename=None):
+def application_components(app, filename=None, *, interactive=True):
     text, buttons = controls(app)
     colors = {"open": 0xA855F7, "claimed": 0xFACC15, "accepting": 0xFACC15, "rejecting": 0xFACC15,
               "accepted": 0x22C55E, "rejected": 0xEF4444, "left": 0x64748B, "archived": 0x64748B}
-    embed = d.Embed(description=text, color=colors[app["status"]])
+    children = [d.ui.TextDisplay(text)]
     if filename:
-        embed.set_image(url=f"attachment://{filename}")
-    return embed, buttons
+        children.append(d.ui.MediaGallery(d.MediaGalleryItem(f"attachment://{filename}")))
+    if interactive and buttons:
+        children.append(d.ui.ActionRow(*buttons))
+    return d.ui.Container(*children, accent_colour=d.Color(colors[app["status"]]))
+
+
+def card_layout(component):
+    return (component.accent_colour,
+            [child.content for child in component.children if child.type == d.ComponentType.text_display],
+            [len(child.items) for child in component.children if child.type == d.ComponentType.media_gallery],
+            [(button.custom_id, button.label) for child in component.children if child.type == d.ComponentType.action_row
+             for button in child.children])
 
 
 async def update_message(message, app, member=None):
@@ -210,29 +221,20 @@ async def update_message(message, app, member=None):
     attachment = next((item for item in images if item.filename == filename), images[0] if images else None)
     keep = [item for item in message.attachments if item not in images]
 
-    if member and (attachment is None or attachment.filename != filename):
+    regenerate = member and (attachment is None or attachment.filename != filename)
+    image_name = filename if regenerate else attachment.filename if attachment else None
+    card = application_components(app, image_name)
+    if (not regenerate and len(images) <= 1 and message.flags.is_components_v2 and len(message.components) == 1
+            and isinstance(message.components[0], d.Container)
+            and card_layout(message.components[0]) == card_layout(card)):
+        return
+    payload = {"content": None, "embeds": [], "components": [card], "attachments": keep}
+    if regenerate:
         png = await profile_card(app["id"], member, json.loads(app["data"]))
-        embed, buttons = application_embed(app, filename)
-        await message.edit(content=None, embed=embed, components=buttons, attachments=keep, file=d.File(png, filename))
-        return
-
-    embed, buttons = application_embed(app, attachment.filename if attachment else None)
-    current = message.embeds[0] if message.embeds else None
-    embedded_image = bool(current and current.image.url and current.image.width)
-    current_buttons = [(item.custom_id, item.label) for row in message.components for item in row.children]
-    expected_buttons = [(item.custom_id, item.label) for item in buttons]
-    if (not message.content and current and current.color == embed.color and current.description == embed.description
-            and current_buttons == expected_buttons and len(images) <= 1 and (not attachment or embedded_image)):
-        return
-    if attachment:
-        # Submit the file and its image embed together so Discord displays it inside the card.
-        file = await attachment.to_file(use_cached=True)
-        await message.edit(content=None, embed=embed, components=buttons, attachments=keep, file=file)
-        return
-
-    if embedded_image:
-        embed.set_image(url=current.image.url)
-    await message.edit(content=None, embed=embed, components=buttons)
+        payload["file"] = d.File(png, filename)
+    elif attachment:
+        payload["file"] = await attachment.to_file(use_cached=True)
+    await message.edit(**payload)
 
 
 async def invite_to_interview(inter, app, config, key):
