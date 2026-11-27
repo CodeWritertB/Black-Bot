@@ -100,11 +100,12 @@ CHANNELS = {
     "lobby": ("Создать комнату", "squad", True, CLAN, True),
     "reviews": ("заявки", "staff", False, REVIEWERS, False),
     "adminChat": ("админ-чат", "staff", False, ("boss", "deputy", "coder"), True),
+    "highVoice": ("Хай войс", "staff", True, ("boss", "deputy", *POSTS), True),
     "logs": ("логи-сервера", "staff", False, ("boss", "deputy", "coder"), False),
     "adminLogs": ("админ-логи", "staff", False, ("boss", "deputy", "coder"), False),
 }
 CHANNEL_EMOJI = dict(verify="🔑", rules="📜", info="🖤", apply="📝", interview="🎙️",
-                     interview2="🎙️", interview3="🎙️", interview4="🎙️", chat="💬", videos="🎬", adminChat="🔒", announcements="📢", voice="🎧", lobby="➕",
+                     interview2="🎙️", interview3="🎙️", interview4="🎙️", chat="💬", videos="🎬", adminChat="🔒", highVoice="🎙️", announcements="📢", voice="🎧", lobby="➕",
                      reviews="📨", logs="📋", adminLogs="🛠️")
 ROLE_EMOJI = dict(boss="👑", deputy="🛡️", coder="💻", smuggler="📦", business="💼",
                   accountant="📊", raider="💥", recruiter="📣", pvp="⚔️", pve="🌾",

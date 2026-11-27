@@ -7,7 +7,7 @@ import rules
 from storage import CATEGORIES, CHANNELS, CLAN, POSTS, ROLE_COLORS, ROLES, VERIFIED, channel_name, db, get_config, has, lookup, role_name, save
 
 REASON = "Black Bot · Black Squad"
-STYLE_VERSION = 15
+STYLE_VERSION = 16
 REQUIRED = (
     "manage_roles", "manage_channels", "manage_nicknames", "change_nickname", "kick_members",
     "view_audit_log", "move_members", "connect", "speak", "view_channel", "send_messages",
@@ -296,6 +296,7 @@ async def install(guild):
             await sync_clan_ping(member, config, configured["clan_ping"])
         except d.HTTPException:
             logging.exception("Не удалось обновить тег клана участнику %s", member.id)
+    staff_channels = {}
     for key, (original_name, category, voice, _, _) in CHANNELS.items():
         name = channel_name(key)
         channel = lookup(guild, key, "channels", config)
@@ -320,6 +321,20 @@ async def install(guild):
         config["channels"][key] = str(channel.id)
         save(guild, config)
         await publish(guild, config, key, channel)
+        if key in ("adminChat", "highVoice"):
+            staff_channels[key] = channel
+    admin_chat = staff_channels["adminChat"]
+    high_voice = staff_channels["highVoice"]
+    staff = categories["staff"]
+    # Discord lists text channels above voice channels within a category.
+    if (admin_chat.category_id != staff.id
+            or any(item.id != admin_chat.id and (item.position, item.id) > (admin_chat.position, admin_chat.id)
+                   for item in staff.text_channels)):
+        await admin_chat.move(end=True, category=staff, reason=REASON)
+    if (high_voice.category_id != staff.id
+            or any(item.id != high_voice.id and (item.position, item.id) < (high_voice.position, high_voice.id)
+                   for item in staff.voice_channels)):
+        await high_voice.move(beginning=True, category=staff, reason=REASON)
     for key in ("pvp", "pve"):
         config["channels"].pop(key, None)
     config.pop("reset_state", None)
