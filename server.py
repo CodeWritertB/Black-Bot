@@ -7,7 +7,7 @@ import rules
 from storage import CATEGORIES, CHANNELS, CLAN, POSTS, ROLE_COLORS, ROLES, VERIFIED, channel_name, db, get_config, has, lookup, role_name, save
 
 REASON = "Black Bot · Black Squad"
-STYLE_VERSION = 10
+STYLE_VERSION = 11
 REQUIRED = (
     "manage_roles", "manage_channels", "manage_nicknames", "change_nickname", "kick_members",
     "view_audit_log", "move_members", "connect", "speak", "view_channel", "send_messages",
@@ -135,8 +135,6 @@ async def publish(guild, config, key, channel):
     if key not in PANELS:
         return
     text, action, label = PANELS[key]
-    if key == "rules" and config.get("rules_source"):
-        text = "**📜 Правила Black Squad**\nПравила перенесены из прежнего канала. Читай их ниже."
     buttons = [button(action, label, emoji=PANEL_EMOJI[action])] if action else []
     if key == "reviews":
         buttons.append(button("tools:invite", "Пригласить на сервер", emoji="🔗"))
@@ -148,18 +146,24 @@ async def publish(guild, config, key, channel):
             message = await original.fetch_message(int(old["message"]))
         except d.NotFound:
             pass
+    if key == "rules" and config.get("rules_text"):
+        await rules.publish(guild, config, channel)
+        if message and message.author.id == guild.me.id:
+            try:
+                await message.delete()
+            except d.NotFound:
+                pass
+        config["panels"].pop(key, None)
+        save(guild, config)
+        return
     if message and message.author.id == guild.me.id and original.id == channel.id:
         await message.edit(content=text, components=buttons)
-        if key == "rules" and config.get("rules_text"):
-            await rules.publish(guild, config, channel)
         return
     new = await channel.send(text, components=buttons)
     config["panels"][key] = {"channel": str(channel.id), "message": str(new.id)}
     save(guild, config)
     if message and message.author.id == guild.me.id:
         await message.edit(components=[])
-    if key == "rules" and config.get("rules_text"):
-        await rules.publish(guild, config, channel)
 
 
 def category_overwrites(guild, config, key):
@@ -384,6 +388,10 @@ async def audit(guild):
                 pass
         if key in PANELS:
             panel = config["panels"].get(key)
+            if key == "rules" and config.get("rules_text"):
+                pages = config["panels"].get("rules_pages", {})
+                ids = pages.get("messages", [])
+                panel = {"channel": pages["channel"], "message": ids[0]} if ids else None
             try:
                 message = await channel.fetch_message(int(panel["message"])) if panel and int(panel["channel"]) == channel.id else None
             except d.HTTPException:
