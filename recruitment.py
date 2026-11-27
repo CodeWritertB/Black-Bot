@@ -8,11 +8,12 @@ import aiohttp
 import disnake as d
 
 from cards import application_card
-from server import REASON, button, log
+from server import REASON, button, log, publish
 from storage import CLAN, FIELDS, REVIEWERS, db, get_config, has, lookup, write
 
 drafts = {}
 locks = set()
+panel_lock = asyncio.Lock()
 ACTIVE = "'publishing','open','claimed','accepting','rejecting'"
 
 
@@ -164,6 +165,11 @@ async def onboarding(inter, action):
     write("UPDATE applications SET status='open',message=? WHERE id=?", str(message.id), number)
     drafts.pop(key, None)
     await update_message(message, find(guild, number))
+    async with panel_lock:
+        try:
+            await publish(guild, get_config(guild), "reviews", channel, repost=True)
+        except d.HTTPException:
+            logging.exception("Не удалось переместить панель набора в конец канала")
     await inter.edit_original_response(content=f"✅ Заявка №{number} отправлена.")
     await log(guild, "Новая заявка", f"№{number} · {member.mention}", True)
     await notify_reviewers(guild, member, number, message, config)
@@ -332,6 +338,11 @@ async def review(inter, action, number):
             if action != "voice" and action not in rooms:
                 message = await inter.channel.fetch_message(int(app["message"])) if proxy else inter.message
                 await update_message(message, find(guild, number))
+    async with panel_lock:
+        try:
+            await publish(guild, get_config(guild), "reviews", channel, repost=True)
+        except d.HTTPException:
+            logging.exception("Не удалось переместить панель набора в конец канала")
         finally:
             locks.discard(number)
 

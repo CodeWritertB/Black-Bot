@@ -7,7 +7,7 @@ import rules
 from storage import CATEGORIES, CHANNELS, CLAN, POSTS, ROLE_COLORS, ROLES, VERIFIED, channel_name, db, get_config, has, lookup, role_name, save
 
 REASON = "Black Bot · Black Squad"
-STYLE_VERSION = 12
+STYLE_VERSION = 13
 REQUIRED = (
     "manage_roles", "manage_channels", "manage_nicknames", "change_nickname", "kick_members",
     "view_audit_log", "move_members", "connect", "speak", "view_channel", "send_messages",
@@ -131,7 +131,7 @@ def permissions(guild, config, key):
     return result
 
 
-async def publish(guild, config, key, channel):
+async def publish(guild, config, key, channel, *, repost=False):
     if key not in PANELS:
         return
     text, action, label = PANELS[key]
@@ -157,14 +157,22 @@ async def publish(guild, config, key, channel):
         config["panels"].pop(key, None)
         save(guild, config)
         return
-    if message and message.author.id == guild.me.id and original.id == channel.id:
+    if key == "reviews" and message and original.id == channel.id:
+        repost = repost or (channel.last_message_id or 0) > message.id
+    if message and message.author.id == guild.me.id and original.id == channel.id and not repost:
         await message.edit(content=text, components=buttons)
         return
     new = await channel.send(text, components=buttons)
     config["panels"][key] = {"channel": str(channel.id), "message": str(new.id)}
     save(guild, config)
     if message and message.author.id == guild.me.id:
-        await message.edit(components=[])
+        if key == "reviews" and repost and original.id == channel.id:
+            try:
+                await message.delete()
+            except d.NotFound:
+                pass
+        else:
+            await message.edit(components=[])
 
 
 def category_overwrites(guild, config, key):
