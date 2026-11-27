@@ -154,8 +154,7 @@ async def onboarding(inter, action):
         return await inter.edit_original_response(content="У тебя уже есть активная заявка.")
     number = entry.lastrowid
     try:
-        png = await profile_card(number, member, data)
-        filename = f"black-squad-{number}-profile.png"
+        png, filename = await profile_card(number, member, data)
         card = application_components(dict(id=number, applicant=str(member.id), status="open", reviewer=None),
                                       filename, interactive=False)
         message = await channel.send(components=[card], file=d.File(png, filename))
@@ -193,12 +192,17 @@ async def notify_reviewers(guild, candidate, number, message, config):
                            and (member.id == guild.owner_id or has(member, REVIEWERS, config))))
 
 
+def profile_filename(number, *, complete=True):
+    return f"black-squad-{number}-discord.png" if complete else f"black-squad-{number}-pending.png"
+
+
 async def profile_card(number, member, data):
     try:
         avatar = await asyncio.wait_for(member.display_avatar.replace(size=128, format="png").read(), timeout=4)
     except (d.HTTPException, aiohttp.ClientError, OSError, TimeoutError):
         avatar = None
-    return await asyncio.to_thread(application_card, number, member.name, data, member.display_name, avatar)
+    image = await asyncio.to_thread(application_card, number, member.name, data, member.display_name, avatar)
+    return image, profile_filename(number, complete=bool(avatar))
 
 
 def application_components(app, filename=None, *, interactive=True):
@@ -222,28 +226,32 @@ def card_layout(component):
 
 
 async def update_message(message, app, member=None):
-    filename = f"black-squad-{app['id']}-profile.png"
+    filename = profile_filename(app["id"])
     images = [item for item in message.attachments if item.filename.lower().endswith(".png")]
     attachment = next((item for item in images if item.filename == filename), images[0] if images else None)
     keep = [item for item in message.attachments if item not in images]
 
     regenerate = attachment is None or (member is not None and attachment.filename != filename)
-    image_name = filename if regenerate else attachment.filename if attachment else None
+    file = None
+    image_name = attachment.filename if attachment else None
+    if regenerate:
+        data = json.loads(app["data"])
+        if member is None:
+            png = await asyncio.to_thread(application_card, app["id"], "", data, data.get("nick"))
+            image_name = profile_filename(app["id"], complete=False)
+        else:
+            png, image_name = await profile_card(app["id"], member, data)
+        file = d.File(png, image_name)
     card = application_components(app, image_name)
     if (not regenerate and len(images) <= 1 and message.flags.is_components_v2 and len(message.components) == 1
             and isinstance(message.components[0], d.Container)
             and card_layout(message.components[0]) == card_layout(card)):
         return
+    if file is None and attachment:
+        file = await attachment.to_file(use_cached=True)
     payload = {"components": [card], "attachments": keep}
-    if regenerate:
-        data = json.loads(app["data"])
-        if member is None:
-            png = await asyncio.to_thread(application_card, app["id"], "", data, data.get("nick"))
-        else:
-            png = await profile_card(app["id"], member, data)
-        payload["file"] = d.File(png, filename)
-    elif attachment:
-        payload["file"] = await attachment.to_file(use_cached=True)
+    if file:
+        payload["file"] = file
     if not message.flags.is_components_v2 and (message.content or message.embeds):
         await message.edit(content=None, embeds=[])
     await message.edit(**payload)
@@ -360,7 +368,9 @@ async def restore(guild, fetch_user=None):
             if app["status"] == "publishing":
                 messages = [item async for item in channel.history(limit=50)
                                 if item.author.id == guild.me.id and any(
-                                    f.filename in (f"black-squad-{app['id']}.png", f"black-squad-{app['id']}-profile.png") for f in item.attachments)]
+                                    f.filename in (f"black-squad-{app['id']}.png", f"black-squad-{app['id']}-profile.png",
+                                                   profile_filename(app["id"]), profile_filename(app["id"], complete=False))
+                                    for f in item.attachments)]
                 message = messages[0] if messages else None
                 if not message:
                     write("DELETE FROM applications WHERE id=? AND status='publishing'", app["id"])
@@ -369,13 +379,13 @@ async def restore(guild, fetch_user=None):
             else:
                 message = await channel.fetch_message(int(app["message"]))
             candidate = None
-            if not any(item.filename == f"black-squad-{app['id']}-profile.png" for item in message.attachments):
+            if not any(item.filename == profile_filename(app["id"]) for item in message.attachments):
                 user_id = int(app["applicant"])
                 candidate = guild.get_member(user_id)
                 if candidate is None:
                     try:
                         candidate = await guild.fetch_member(user_id)
-                    except d.NotFound:
+                    except (d.NotFound, d.Forbidden):
                         if fetch_user:
                             try:
                                 candidate = await fetch_user(user_id)
