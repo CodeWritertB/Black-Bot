@@ -287,7 +287,7 @@ async def review(inter, action, number):
         url = f"https://discord.com/channels/{guild.id}/{app['channel']}/{app['message']}"
         text, buttons = controls(app)
         return await inter.response.edit_message(content=f"{text}\n[Открыть карточку заявки]({url})", components=buttons)
-    await inter.response.defer(ephemeral=True)
+    await inter.response.defer(with_message=True, ephemeral=True)
     if number in locks:
         return await inter.edit_original_response(content="Заявку уже обрабатывают.")
     locks.add(number)
