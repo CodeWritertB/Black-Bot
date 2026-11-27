@@ -32,6 +32,8 @@ def controls(app):
         buttons.append(button(f"review:accept:{number}", "Принять", d.ButtonStyle.success, emoji="✅"))
     if state in ("claimed", "rejecting"):
         buttons.append(button(f"review:reject:{number}", "Отклонить и кикнуть", d.ButtonStyle.danger, emoji="⛔"))
+    if state in ("open", "claimed"):
+        buttons.append(button(f"review:voice:{number}", "Позвать в Voice", emoji="🎙️"))
     if state == "claimed":
         buttons.append(button(f"review:release:{number}", "Вернуть в очередь", d.ButtonStyle.secondary, emoji="↩️"))
     return f"**📨 Заявка №{number}** · <@{app['applicant']}>\n{labels[state]}", buttons
@@ -183,7 +185,36 @@ async def notify_reviewers(guild, candidate, number, message, config):
 
 async def update_message(message, app):
     text, buttons = controls(app)
-    await message.edit(content=text, components=buttons)
+    colors = {"open": 0xA855F7, "claimed": 0xFACC15, "accepting": 0xFACC15, "rejecting": 0xFACC15,
+              "accepted": 0x22C55E, "rejected": 0xEF4444, "left": 0x64748B, "archived": 0x64748B}
+    embed = d.Embed(description=text, color=colors[app["status"]])
+    filename = f"black-squad-{app['id']}.png"
+    if any(item.filename == filename for item in message.attachments):
+        embed.set_image(url=f"attachment://{filename}")
+    await message.edit(content=None, embed=embed, components=buttons)
+
+
+async def invite_to_interview(inter, app, config):
+    guild = inter.guild
+    channel = lookup(guild, "interview", "channels", config)
+    if not isinstance(channel, d.VoiceChannel):
+        return await inter.edit_original_response(content="Голосовой канал «Собеседование» ещё не настроен.")
+    try:
+        candidate = await guild.fetch_member(int(app["applicant"]))
+    except d.NotFound:
+        return await inter.edit_original_response(content="Кандидат уже покинул сервер.")
+    if not channel.permissions_for(candidate).connect:
+        return await inter.edit_original_response(content="У кандидата нет доступа к «Собеседованию».")
+    url = f"https://discord.com/channels/{guild.id}/{channel.id}"
+    try:
+        await candidate.send(f"🎙️ Black Squad ждёт тебя на собеседовании по заявке №{app['id']}.\n"
+                             f"[Зайти в голосовой канал «Собеседование»]({url})",
+                             allowed_mentions=d.AllowedMentions.none())
+    except d.Forbidden:
+        return await inter.edit_original_response(content="Не удалось отправить приглашение: у кандидата закрыты ЛС.")
+    await inter.edit_original_response(content=f"🎙️ Отправил {candidate.mention} ссылку на собеседование.")
+    await log(guild, "Приглашение на собеседование",
+              f"№{app['id']} · {inter.author.mention} → {candidate.mention}", True)
 
 
 async def review(inter, action, number):
@@ -202,6 +233,10 @@ async def review(inter, action, number):
         app = find(guild, number)
         actor = str(inter.author.id)
         state = app["status"]
+        if action == "voice":
+            if state != "open" and (state != "claimed" or app["reviewer"] != actor):
+                return await inter.edit_original_response(content="Позвать можно из очереди или из заявки, которую ты взял.")
+            return await invite_to_interview(inter, app, config)
         if action == "claim":
             changed = write("UPDATE applications SET status='claimed',reviewer=? WHERE id=? AND status='open'", actor, number)
             if not changed.rowcount:
