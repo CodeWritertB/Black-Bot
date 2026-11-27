@@ -7,7 +7,7 @@ import rules
 from storage import CATEGORIES, CHANNELS, CLAN, POSTS, ROLE_COLORS, ROLES, VERIFIED, channel_name, db, get_config, has, lookup, role_name, save
 
 REASON = "Black Bot · Black Squad"
-STYLE_VERSION = 14
+STYLE_VERSION = 15
 REQUIRED = (
     "manage_roles", "manage_channels", "manage_nicknames", "change_nickname", "kick_members",
     "view_audit_log", "move_members", "connect", "speak", "view_channel", "send_messages",
@@ -29,7 +29,7 @@ STAFF_PERMISSIONS = {"coder": CODER_PERMISSIONS, "deputy": DEPUTY_PERMISSIONS}
 
 # Discord displays only the highest separated role a member has.
 ROLE_ORDER = (
-    "boss", "deputy", "coder", "smuggler", "business", "accountant", "raider", "recruiter",
+    "boss", "coder", "accountant", "raider", "business", "smuggler", "deputy", "recruiter",
     "star5", "star4", "star3", "star2", "star1", "member", "trial", "pvp", "pve",
     "guest", "unverified", "clan_ping",
 )
