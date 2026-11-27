@@ -227,19 +227,25 @@ async def update_message(message, app, member=None):
     attachment = next((item for item in images if item.filename == filename), images[0] if images else None)
     keep = [item for item in message.attachments if item not in images]
 
-    regenerate = member and (attachment is None or attachment.filename != filename)
+    regenerate = attachment is None or (member is not None and attachment.filename != filename)
     image_name = filename if regenerate else attachment.filename if attachment else None
     card = application_components(app, image_name)
     if (not regenerate and len(images) <= 1 and message.flags.is_components_v2 and len(message.components) == 1
             and isinstance(message.components[0], d.Container)
             and card_layout(message.components[0]) == card_layout(card)):
         return
-    payload = {"content": None, "embeds": [], "components": [card], "attachments": keep}
+    payload = {"components": [card], "attachments": keep}
     if regenerate:
-        png = await profile_card(app["id"], member, json.loads(app["data"]))
+        data = json.loads(app["data"])
+        if member is None:
+            png = await asyncio.to_thread(application_card, app["id"], "", data, data.get("nick"))
+        else:
+            png = await profile_card(app["id"], member, data)
         payload["file"] = d.File(png, filename)
     elif attachment:
         payload["file"] = await attachment.to_file(use_cached=True)
+    if not message.flags.is_components_v2 and (message.content or message.embeds):
+        await message.edit(content=None, embeds=[])
     await message.edit(**payload)
 
 

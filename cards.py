@@ -45,7 +45,7 @@ def application_card(number, username, data, display_name=None, avatar_bytes=Non
     while regular.getlength(profile) > 730:
         profile = profile[:-1]
     draw.text((110, 151), profile, font=regular, fill="#f2f3f6")
-    draw.text((110, 177), "@" + username, font=label_font, fill="#c7cbd2")
+    draw.text((110, 177), "@" + username if username else "Логин недоступен", font=label_font, fill="#c7cbd2")
     for index, (label, emoji, lines) in enumerate(rows, 1):
         height = 78 + len(lines) * 32
         draw.rectangle((48, y, 872, y + height - 14), fill="#1b1e25")
