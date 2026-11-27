@@ -7,7 +7,7 @@ import disnake as d
 from cards import room_card
 from recruitment import respond
 from server import REASON, button, log
-from storage import CLAN, db, get_config, has, lookup, write
+from storage import CLAN, HIGH_STAFF, db, get_config, has, lookup, write
 
 creating = set()
 room_locks = defaultdict(asyncio.Lock)
@@ -78,7 +78,7 @@ def room_permissions(guild, owner, locked, hidden, stream=None):
     for key in CLAN:
         role = lookup(guild, key, "roles", config)
         if role:
-            can_move = key in ("deputy", "coder")
+            can_move = key in HIGH_STAFF
             result[role] = d.PermissionOverwrite(view_channel=can_move or not hidden, connect=can_move or not locked, speak=True,
                                                 use_voice_activation=True,
                                                 send_messages=True, read_message_history=True)
@@ -157,7 +157,7 @@ async def reconcile(channel, *, refresh=False):
 
 async def restore_staff_access(channel):
     config = get_config(channel.guild)
-    for key in ("deputy", "coder"):
+    for key in HIGH_STAFF:
         role = lookup(channel.guild, key, "roles", config)
         if role is None:
             continue

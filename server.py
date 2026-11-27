@@ -4,10 +4,10 @@ import disnake as d
 
 import rules
 
-from storage import CATEGORIES, CHANNELS, CLAN, POSTS, ROLE_COLORS, ROLES, VERIFIED, channel_name, db, get_config, has, lookup, role_name, save
+from storage import CATEGORIES, CHANNELS, CLAN, HIGH_STAFF, POSTS, ROLE_COLORS, ROLES, VERIFIED, channel_name, db, get_config, has, lookup, role_name, save
 
 REASON = "Black Bot · Black Squad"
-STYLE_VERSION = 16
+STYLE_VERSION = 17
 REQUIRED = (
     "manage_roles", "manage_channels", "manage_nicknames", "change_nickname", "kick_members",
     "view_audit_log", "move_members", "connect", "speak", "view_channel", "send_messages",
@@ -22,7 +22,8 @@ CODER_PERMISSIONS = d.Permissions(
     move_members=True, mute_members=True, deafen_members=True,
 )
 DEPUTY_PERMISSIONS = d.Permissions(manage_roles=True, move_members=True)
-STAFF_PERMISSIONS = {"coder": CODER_PERMISSIONS, "deputy": DEPUTY_PERMISSIONS}
+STAFF_PERMISSIONS = {**dict.fromkeys(HIGH_STAFF, d.Permissions(move_members=True)),
+                     "coder": CODER_PERMISSIONS, "deputy": DEPUTY_PERMISSIONS}
 
 
 
@@ -389,7 +390,7 @@ async def audit(guild):
                 findings.append(f"Роли «{label}» не выданы права: " + ", ".join(missing))
         if role and role.permissions.administrator and key not in ("boss", "coder"):
             findings.append(f"Проверь право администратора: {label}")
-    for key in STAFF_PERMISSIONS:
+    for key in ("coder", "deputy"):
         manager = lookup(guild, key, "roles", config)
         if manager is None:
             continue

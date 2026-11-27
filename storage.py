@@ -81,7 +81,8 @@ ROLES = dict(boss="Босс", deputy="Зам", coder="Кодер", smuggler="К�
              trial="Пробник", guest="Кто ты, воин?", unverified="Не верифицирован", clan_ping="Клан",
              **{f"star{n}": "⭐" * n for n in range(1, 6)})
 POSTS = ("coder", "smuggler", "business", "accountant", "raider")
-REVIEWERS = ("boss", "deputy", "recruiter", *POSTS)
+HIGH_STAFF = ("boss", "deputy", *POSTS)
+REVIEWERS = (*HIGH_STAFF, "recruiter")
 CLAN = ("trial", "member", *REVIEWERS)
 VERIFIED = ("guest", *CLAN)
 CATEGORIES = dict(gate="🔐 ВХОД", entry="📋 BLACK SQUAD · НАБОР", squad="🖤 BLACK SQUAD · КЛАН",
@@ -100,7 +101,7 @@ CHANNELS = {
     "lobby": ("Создать комнату", "squad", True, CLAN, True),
     "reviews": ("заявки", "staff", False, REVIEWERS, False),
     "adminChat": ("админ-чат", "staff", False, ("boss", "deputy", "coder"), True),
-    "highVoice": ("Хай войс", "staff", True, ("boss", "deputy", *POSTS), True),
+    "highVoice": ("Хай войс", "staff", True, HIGH_STAFF, True),
     "logs": ("логи-сервера", "staff", False, ("boss", "deputy", "coder"), False),
     "adminLogs": ("админ-логи", "staff", False, ("boss", "deputy", "coder"), False),
 }
