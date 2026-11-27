@@ -10,7 +10,7 @@ ASSETS = Path(__file__).with_name("assets")
 FONT = ASSETS / "NotoSans-Regular.ttf"
 
 
-def application_card(number, username, data):
+def application_card(number, username, data, display_name=None, avatar_bytes=None):
     regular = ImageFont.truetype(str(FONT), 23)
     label_font = ImageFont.truetype(str(FONT), 20)
     title = ImageFont.truetype(str(FONT), 38)
@@ -24,12 +24,28 @@ def application_card(number, username, data):
             line += char
         lines.append(line.rstrip())
         rows.append((label, emoji, lines))
-    image = Image.new("RGB", (920, 190 + sum(78 + 32 * len(lines) for _, _, lines in rows)), "#111318")
+    image = Image.new("RGB", (920, 240 + sum(78 + 32 * len(lines) for _, _, lines in rows)), "#111318")
     draw = ImageDraw.Draw(image)
     draw.rectangle((48, 42, 100, 46), fill="#c4a675")
     draw.text((48, 57), "BLACK SQUAD", font=title, fill="#dfbd84")
-    draw.text((48, 113), f"Заявка №{number}  /  {username}", font=label_font, fill="#c7cbd2")
-    y = 170
+    draw.text((48, 113), f"Заявка №{number}", font=label_font, fill="#c7cbd2")
+    y = 220
+    draw.rounded_rectangle((48, 150, 872, 202), 12, fill="#1b1e25")
+    draw.ellipse((58, 155, 99, 196), fill="#454a58")
+    if avatar_bytes:
+        try:
+            with Image.open(BytesIO(avatar_bytes)) as source:
+                avatar = ImageOps.fit(source.convert("RGB"), (42, 42))
+            mask = Image.new("L", (42, 42))
+            ImageDraw.Draw(mask).ellipse((0, 0, 41, 41), fill=255)
+            image.paste(avatar, (58, 155), mask)
+        except (OSError, ValueError):
+            pass
+    profile = display_name or username
+    while regular.getlength(profile) > 730:
+        profile = profile[:-1]
+    draw.text((110, 151), profile, font=regular, fill="#f2f3f6")
+    draw.text((110, 177), "@" + username, font=label_font, fill="#c7cbd2")
     for index, (label, emoji, lines) in enumerate(rows, 1):
         height = 78 + len(lines) * 32
         draw.rectangle((48, y, 872, y + height - 14), fill="#1b1e25")

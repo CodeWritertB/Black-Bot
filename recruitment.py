@@ -4,6 +4,7 @@ import logging
 import re
 import time
 
+import aiohttp
 import disnake as d
 
 from cards import application_card
@@ -152,8 +153,8 @@ async def onboarding(inter, action):
         return await inter.edit_original_response(content="У тебя уже есть активная заявка.")
     number = entry.lastrowid
     try:
-        png = await asyncio.to_thread(application_card, number, member.name, data)
-        filename = f"black-squad-{number}.png"
+        png = await profile_card(number, member, data)
+        filename = f"black-squad-{number}-profile.png"
         embed, _ = application_embed(dict(id=number, applicant=str(member.id), status="open", reviewer=None), filename)
         message = await channel.send(embed=embed, file=d.File(png, filename))
     except Exception:
@@ -185,6 +186,14 @@ async def notify_reviewers(guild, candidate, number, message, config):
                            and (member.id == guild.owner_id or has(member, REVIEWERS, config))))
 
 
+async def profile_card(number, member, data):
+    try:
+        avatar = await asyncio.wait_for(member.display_avatar.replace(size=128, format="png").read(), timeout=4)
+    except (d.HTTPException, aiohttp.ClientError, OSError, TimeoutError):
+        avatar = None
+    return await asyncio.to_thread(application_card, number, member.name, data, member.display_name, avatar)
+
+
 def application_embed(app, filename=None):
     text, buttons = controls(app)
     colors = {"open": 0xA855F7, "claimed": 0xFACC15, "accepting": 0xFACC15, "rejecting": 0xFACC15,
@@ -195,11 +204,18 @@ def application_embed(app, filename=None):
     return embed, buttons
 
 
-async def update_message(message, app):
-    filename = f"black-squad-{app['id']}.png"
+async def update_message(message, app, member=None):
+    filename = f"black-squad-{app['id']}-profile.png"
     attachment = next((item for item in message.attachments if item.filename == filename), None)
     if attachment is None:
         attachment = next((item for item in message.attachments if item.filename.lower().endswith(".png")), None)
+
+    if member and (attachment is None or attachment.filename != filename):
+        png = await profile_card(app["id"], member, json.loads(app["data"]))
+        embed, buttons = application_embed(app, filename)
+        keep = [item for item in message.attachments if not attachment or item.id != attachment.id]
+        await message.edit(content=None, embed=embed, components=buttons, attachments=keep, file=d.File(png, filename))
+        return
 
     embed, buttons = application_embed(app, attachment.filename if attachment else None)
     current = message.embeds[0] if message.embeds else None
@@ -251,12 +267,14 @@ async def review(inter, action, number):
         return await respond(inter, "Заявки рассматривает штаб.")
     app = find(guild, number)
     rooms = {"voice-1": "interview", **{f"voice-{n}": f"interview{n}" for n in range(2, 5)}}
+    proxy = bool(getattr(getattr(inter.message, "flags", None), "ephemeral", False))
     if not app or app["channel"] != str(inter.channel_id) or (
-            action != "voice-back" and action not in rooms and app["message"] != str(inter.message.id)):
+            not proxy and action != "voice-back" and action not in rooms and app["message"] != str(inter.message.id)):
         return await respond(inter, "Кнопка относится к другой заявке.")
     if action == "voice-back":
         url = f"https://discord.com/channels/{guild.id}/{app['channel']}/{app['message']}"
-        return await inter.response.edit_message(content=f"↩️ [Вернуться к заявке №{number}]({url})", components=[])
+        text, buttons = controls(app)
+        return await inter.response.edit_message(content=f"{text}\n[Открыть карточку заявки]({url})", components=buttons)
     await inter.response.defer(ephemeral=True)
     if number in locks:
         return await inter.edit_original_response(content="Заявку уже обрабатывают.")
@@ -312,7 +330,8 @@ async def review(inter, action, number):
     finally:
         try:
             if action != "voice" and action not in rooms:
-                await update_message(inter.message, find(guild, number))
+                message = await inter.channel.fetch_message(int(app["message"])) if proxy else inter.message
+                await update_message(message, find(guild, number))
         finally:
             locks.discard(number)
 
@@ -327,7 +346,7 @@ async def restore(guild):
             if app["status"] == "publishing":
                 messages = [item async for item in channel.history(limit=50)
                                 if item.author.id == guild.me.id and any(
-                                    f.filename == f"black-squad-{app['id']}.png" for f in item.attachments)]
+                                    f.filename in (f"black-squad-{app['id']}.png", f"black-squad-{app['id']}-profile.png") for f in item.attachments)]
                 message = messages[0] if messages else None
                 if not message:
                     write("DELETE FROM applications WHERE id=? AND status='publishing'", app["id"])
@@ -335,7 +354,7 @@ async def restore(guild):
                 write("UPDATE applications SET status='open',message=? WHERE id=?", str(message.id), app["id"])
             else:
                 message = await channel.fetch_message(int(app["message"]))
-            await update_message(message, find(guild, app["id"]))
+            await update_message(message, find(guild, app["id"]), guild.get_member(int(app["applicant"])))
         except d.NotFound:
             if app["status"] in ("open", "claimed"):
                 write("UPDATE applications SET status='left' WHERE id=?", app["id"])
